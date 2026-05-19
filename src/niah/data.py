@@ -175,15 +175,15 @@ def make_unique_key(rng: random.Random, used_keys: set[str]) -> str:
             return key
 
 
-def _filler_until(target_length: int, make_prompt) -> tuple[str, int]:
+def _filler_until(target_length: int, make_prompt, count_length=count_approx_tokens) -> tuple[str, int]:
     filler_unit = " ".join(FILLER_SENTENCES) + " "
     filler = ""
     while True:
         filler += filler_unit
         prompt = make_prompt(filler)
-        approx_tokens = count_approx_tokens(prompt)
-        if approx_tokens >= target_length:
-            return prompt, approx_tokens
+        length_count = count_length(prompt)
+        if length_count >= target_length:
+            return prompt, length_count
 
 
 def generate_single_example(
@@ -192,6 +192,8 @@ def generate_single_example(
     target_length: int,
     seed: int,
     position_fraction: float | None = None,
+    count_length=count_approx_tokens,
+    length_metric: str = "approx_words",
 ) -> dict[str, Any]:
     rng = random.Random(seed)
     key = make_key(rng)
@@ -210,12 +212,13 @@ def generate_single_example(
         )
         return "Document:\n\n" + filler[:split_idx] + "\n\n" + needle + "\n\n" + filler[split_idx:] + query
 
-    prompt, approx_tokens = _filler_until(target_length, make_prompt)
+    prompt, length_count = _filler_until(target_length, make_prompt, count_length)
     return {
         "example_id": example_id,
         "task": "passkey_single",
         "target_length": target_length,
-        "approx_tokens": approx_tokens,
+        "approx_tokens": length_count,
+        "length_metric": length_metric,
         "seed": seed,
         "key": key,
         "answer": answer,
@@ -234,6 +237,8 @@ def generate_distractor_example(
     target_length: int,
     seed: int,
     num_distractors: int,
+    count_length=count_approx_tokens,
+    length_metric: str = "approx_words",
 ) -> dict[str, Any]:
     rng = random.Random(seed)
     used_keys: set[str] = set()
@@ -282,12 +287,13 @@ def generate_distractor_example(
         )
         return "Document:\n\n" + "".join(parts) + query
 
-    prompt, approx_tokens = _filler_until(target_length, make_prompt)
+    prompt, length_count = _filler_until(target_length, make_prompt, count_length)
     return {
         "example_id": example_id,
         "task": "passkey_distractors",
         "target_length": target_length,
-        "approx_tokens": approx_tokens,
+        "approx_tokens": length_count,
+        "length_metric": length_metric,
         "seed": seed,
         "key": target_key,
         "answer": target_answer,
@@ -306,6 +312,7 @@ def generate_dataset(config: dict[str, Any]) -> list[dict[str, Any]]:
     n_per_length = int(config.get("n_per_length", 50))
     base_seed = int(config.get("seed", 812345))
     num_distractors = int(config.get("num_distractors", 20))
+    count_length, length_metric = build_length_counter(config)
 
     rows: list[dict[str, Any]] = []
     for target_length in target_lengths:
@@ -317,6 +324,8 @@ def generate_dataset(config: dict[str, Any]) -> list[dict[str, Any]]:
                     example_id=example_id,
                     target_length=target_length,
                     seed=seed,
+                    count_length=count_length,
+                    length_metric=length_metric,
                 )
             elif task == "passkey_distractors":
                 row = generate_distractor_example(
@@ -324,8 +333,28 @@ def generate_dataset(config: dict[str, Any]) -> list[dict[str, Any]]:
                     target_length=target_length,
                     seed=seed,
                     num_distractors=num_distractors,
+                    count_length=count_length,
+                    length_metric=length_metric,
                 )
             else:
                 raise ValueError(f"Unknown dataset task: {task}")
             rows.append(row)
     return rows
+
+
+def build_length_counter(config: dict[str, Any]):
+    tokenizer_id = config.get("tokenizer_id")
+    if not tokenizer_id:
+        return count_approx_tokens, "approx_words"
+
+    try:
+        from transformers import AutoTokenizer
+    except ImportError as exc:
+        raise RuntimeError("transformers is required for tokenizer-calibrated dataset generation.") from exc
+
+    tokenizer = AutoTokenizer.from_pretrained(str(tokenizer_id), trust_remote_code=bool(config.get("trust_remote_code", False)))
+
+    def count_with_tokenizer(text: str) -> int:
+        return len(tokenizer(text, add_special_tokens=False).input_ids)
+
+    return count_with_tokenizer, f"tokens:{tokenizer_id}"

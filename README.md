@@ -44,6 +44,15 @@ python -m niah.cli.generate_dataset \
   --out datasets/d20_paired.jsonl
 ```
 
+Generate a token-calibrated dataset on a GPU/remote machine:
+
+```bash
+python -m niah.cli.generate_dataset \
+  --config configs/dataset_d20_paired.yaml \
+  --tokenizer-id benchang1110/mamba2-370m-hf \
+  --out datasets/d20_paired_mamba2tok.jsonl
+```
+
 Evaluate a model:
 
 ```bash

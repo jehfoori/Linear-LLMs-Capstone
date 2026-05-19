@@ -1,4 +1,4 @@
-from niah.data import generate_dataset, generate_distractor_example
+from niah.data import build_length_counter, generate_dataset, generate_distractor_example
 
 
 def test_distractor_example_invariants():
@@ -34,3 +34,9 @@ def test_dataset_generation_is_deterministic():
     assert first == second
     assert len(first) == 6
     assert len({row["example_id"] for row in first}) == 6
+
+
+def test_default_length_counter_is_approx_words():
+    count_length, length_metric = build_length_counter({})
+    assert length_metric == "approx_words"
+    assert count_length("one two three") == 3
