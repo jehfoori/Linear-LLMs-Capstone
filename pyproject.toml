@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "linear-llm-niah"
+version = "0.1.0"
+description = "Lightweight NIAH/passkey reproduction pipeline for linear-time language models."
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+]
+plot = [
+  "matplotlib>=3.8",
+]
+mamba2 = [
+  "torch",
+  "transformers>=4.46",
+  "accelerate",
+  "safetensors",
+  "sentencepiece",
+]
+gated-deltanet = [
+  "torch",
+  "transformers>=4.46",
+  "accelerate",
+  "safetensors",
+  "sentencepiece",
+  "huggingface_hub",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

@@ -1,0 +1,13 @@
+runner: transformers_causal_lm
+model_id: benchang1110/mamba2-370m-hf
+label: Mamba-2 370M HF
+revision: null
+trust_remote_code: false
+dtype: bfloat16
+device: cuda
+max_new_tokens: 8
+do_sample: false
+use_cache: true
+config_patch:
+  chunk_size: 128
+manual_weight_conversion: false

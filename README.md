@@ -1,0 +1,71 @@
+# Linear LLM NIAH Reproduction Pipeline
+
+This repo turns the original Colab notebooks into a lightweight, reproducible
+pipeline for passkey / needle-in-a-haystack retrieval experiments.
+
+The intended workflow is:
+
+1. Generate a fixed paired dataset locally.
+2. Run model inference on Colab or a GPU VM.
+3. Bring the run folder back here.
+4. Analyze, compare, plot, and write the report locally.
+
+## Local Setup
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev,plot]"
+pytest
+```
+
+GPU machines should install only the extras they need:
+
+```bash
+pip install -e ".[mamba2]"
+pip install -e ".[gated-deltanet]"
+```
+
+## Core Commands
+
+Generate a paired distractor dataset:
+
+```bash
+python -m niah.cli.generate_dataset \
+  --config configs/dataset_d20_paired.yaml \
+  --out datasets/d20_paired.jsonl
+```
+
+Evaluate a model:
+
+```bash
+python -m niah.cli.evaluate \
+  --dataset datasets/d20_paired.jsonl \
+  --model-config configs/model_mamba2_official.yaml \
+  --out results/mamba2_official_d20_paired
+```
+
+Analyze one run:
+
+```bash
+python -m niah.cli.analyze_results \
+  --run-dir results/mamba2_official_d20_paired
+```
+
+Compare paired runs:
+
+```bash
+python -m niah.cli.compare_runs \
+  --run-dirs results/mamba2_official_d20_paired results/gated_deltanet_d20_paired \
+  --out results/comparison_d20_paired
+```
+
+## Design Notes
+
+- Datasets are canonical JSONL prompt files.
+- Predictions are JSONL plus CSV for spreadsheet-friendly inspection.
+- Every run writes `manifest.json`, `environment.json`, and
+  `model_load_report.json`.
+- Model-specific loading stays isolated in `src/niah/models.py`.
+- The report and archived notebooks live under `report/` and
+  `notebooks/archived/`.

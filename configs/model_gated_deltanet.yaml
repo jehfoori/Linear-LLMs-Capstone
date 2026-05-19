@@ -1,0 +1,12 @@
+runner: transformers_causal_lm
+model_id: linear-moe-hub/Gated-Deltanet-340M
+label: Gated DeltaNet 340M
+revision: null
+trust_remote_code: true
+dtype: bfloat16
+device: cuda
+max_new_tokens: 8
+do_sample: false
+use_cache: true
+config_patch: {}
+manual_weight_conversion: false
