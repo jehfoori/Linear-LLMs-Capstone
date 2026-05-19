@@ -1,5 +1,6 @@
 runner: transformers_causal_lm
 model_id: state-spaces/mamba2-370m
+tokenizer_id: EleutherAI/gpt-neox-20b
 label: Mamba-2 370M Official
 revision: null
 trust_remote_code: true

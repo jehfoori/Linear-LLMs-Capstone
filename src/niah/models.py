@@ -76,6 +76,7 @@ class TransformersCausalLMRunner:
     def __init__(self, config: dict[str, Any]):
         self.config = config
         self.model_id = config["model_id"]
+        self.tokenizer_id = config.get("tokenizer_id", self.model_id)
         self.revision = config.get("revision")
         self.label = config.get("label", self.model_id)
         self.trust_remote_code = bool(config.get("trust_remote_code", False))
@@ -115,7 +116,9 @@ class TransformersCausalLMRunner:
                 tokenizer_kwargs["revision"] = self.revision
                 model_kwargs["revision"] = self.revision
 
-            self.tokenizer = AutoTokenizer.from_pretrained(self.model_id, **tokenizer_kwargs)
+            if self.tokenizer_id != self.model_id:
+                self.load_report.notes.append(f"Using tokenizer_id={self.tokenizer_id!r}")
+            self.tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_id, **tokenizer_kwargs)
             config = AutoConfig.from_pretrained(self.model_id, trust_remote_code=self.trust_remote_code, revision=self.revision)
             for key, value in self.config_patch.items():
                 setattr(config, key, value)
