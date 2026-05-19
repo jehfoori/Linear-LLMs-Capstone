@@ -28,6 +28,14 @@ pip install -e ".[gated-deltanet]"
 
 ## Core Commands
 
+Generate a tiny smoke dataset:
+
+```bash
+python -m niah.cli.generate_dataset \
+  --config configs/dataset_d20_smoke.yaml \
+  --out datasets/d20_smoke.jsonl
+```
+
 Generate a paired distractor dataset:
 
 ```bash
@@ -43,6 +51,26 @@ python -m niah.cli.evaluate \
   --dataset datasets/d20_paired.jsonl \
   --model-config configs/model_mamba2_official.yaml \
   --out results/mamba2_official_d20_paired
+```
+
+Run a cheap smoke evaluation before spending real GPU time:
+
+```bash
+python -m niah.cli.evaluate \
+  --dataset datasets/d20_paired.jsonl \
+  --model-config configs/model_mamba2_official.yaml \
+  --out results/mamba2_official_smoke \
+  --limit 2
+```
+
+Or target specific examples:
+
+```bash
+python -m niah.cli.evaluate \
+  --dataset datasets/d20_paired.jsonl \
+  --model-config configs/model_mamba2_official.yaml \
+  --out results/mamba2_official_selected \
+  --example-ids passkey_distractors_1024_0000 passkey_distractors_4096_0000
 ```
 
 Analyze one run:

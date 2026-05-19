@@ -16,12 +16,15 @@ def main() -> None:
     parser.add_argument("--dataset", required=True, help="Input dataset JSONL.")
     parser.add_argument("--model-config", required=True, help="Model YAML/JSON config.")
     parser.add_argument("--out", required=True, help="Output run directory.")
+    parser.add_argument("--limit", type=int, default=None, help="Evaluate only the first N selected examples.")
+    parser.add_argument("--example-ids", nargs="+", default=None, help="Evaluate only these example IDs, in dataset order.")
     args = parser.parse_args()
 
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    dataset = read_jsonl(args.dataset)
+    full_dataset = read_jsonl(args.dataset)
+    dataset = select_examples(full_dataset, example_ids=args.example_ids, limit=args.limit)
     model_config = load_config(args.model_config)
     environment = collect_environment()
     write_json(out_dir / "environment.json", environment)
@@ -30,6 +33,12 @@ def main() -> None:
         **dataset_manifest(args.dataset),
         "model_config_path": args.model_config,
         "model_config": model_config,
+        "evaluation_subset": {
+            "requested_example_ids": args.example_ids,
+            "limit": args.limit,
+            "num_selected_examples": len(dataset),
+            "num_total_examples": len(full_dataset),
+        },
         "generation": {
             "max_new_tokens": model_config.get("max_new_tokens", 8),
             "do_sample": model_config.get("do_sample", False),
@@ -79,6 +88,29 @@ def main() -> None:
 
     write_predictions_csv(out_dir / "predictions.csv", predictions)
     print(f"Wrote run outputs to {out_dir}")
+
+
+def select_examples(
+    dataset: list[dict],
+    *,
+    example_ids: list[str] | None = None,
+    limit: int | None = None,
+) -> list[dict]:
+    selected = dataset
+    if example_ids:
+        requested = set(example_ids)
+        selected = [row for row in selected if row.get("example_id") in requested]
+        found = {row.get("example_id") for row in selected}
+        missing = sorted(requested - found)
+        if missing:
+            raise ValueError(f"Example IDs not found in dataset: {missing}")
+    if limit is not None:
+        if limit < 1:
+            raise ValueError("--limit must be at least 1")
+        selected = selected[:limit]
+    if not selected:
+        raise ValueError("No examples selected for evaluation.")
+    return selected
 
 
 if __name__ == "__main__":

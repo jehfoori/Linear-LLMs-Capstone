@@ -3,6 +3,7 @@ import json
 import pytest
 
 from niah.analyze import compare_runs
+from niah.cli.evaluate import select_examples
 from niah.data import write_json, write_jsonl
 
 
@@ -48,3 +49,12 @@ def test_compare_writes_outputs_for_matching_hashes(tmp_path):
     assert (tmp_path / "out" / "accuracy_table.csv").exists()
     manifest = json.loads((tmp_path / "out" / "manifest.json").read_text())
     assert manifest["dataset_sha256"] == "aaa"
+
+
+def test_select_examples_by_limit_and_ids():
+    rows = [{"example_id": "a"}, {"example_id": "b"}, {"example_id": "c"}]
+    assert select_examples(rows, example_ids=None, limit=2) == rows[:2]
+    assert select_examples(rows, example_ids=["b", "c"], limit=1) == [{"example_id": "b"}]
+
+    with pytest.raises(ValueError):
+        select_examples(rows, example_ids=["missing"], limit=None)
