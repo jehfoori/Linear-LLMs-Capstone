@@ -1,0 +1,7 @@
+torch==2.3.0
+transformers==4.46.3
+packaging
+ninja
+einops
+https://github.com/Dao-AILab/causal-conv1d/releases/download/v1.4.0/causal_conv1d-1.4.0+cu122torch2.3cxx11abiFALSE-cp311-cp311-linux_x86_64.whl
+https://github.com/state-spaces/mamba/releases/download/v2.2.4/mamba_ssm-2.2.4+cu12torch2.3cxx11abiFALSE-cp311-cp311-linux_x86_64.whl
