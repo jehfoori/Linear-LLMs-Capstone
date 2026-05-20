@@ -545,6 +545,7 @@ class HazyResearchLMRunner:
             self.tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_id, **tokenizer_kwargs)
 
             model_cls = self._model_class()
+            self._patch_hazy_optional_types()
             self._patch_hazy_config_loader()
             self.model = model_cls.from_pretrained_hf(model_source).to(device=self.device, dtype=dtype)
             self.model.eval()
@@ -591,6 +592,23 @@ class HazyResearchLMRunner:
             based_gpt.load_config_hf = load_config_hf_with_patch
         for key, value in self.config_patch.items():
             self.load_report.notes.append(f"Applied explicit HazyResearch config patch: {key}={value!r}")
+
+    def _patch_hazy_optional_types(self) -> None:
+        class UnavailableColumnParallelLinear:
+            pass
+
+        if self.architecture == "based":
+            import based.models.gpt as based_gpt
+
+            if based_gpt.ColumnParallelLinear is None:
+                based_gpt.ColumnParallelLinear = UnavailableColumnParallelLinear
+                self.load_report.notes.append("Patched missing ColumnParallelLinear optional type.")
+        if self.architecture == "attention":
+            import based.models.transformer.gpt as transformer_gpt
+
+            if transformer_gpt.ColumnParallelLinear is None:
+                transformer_gpt.ColumnParallelLinear = UnavailableColumnParallelLinear
+                self.load_report.notes.append("Patched missing ColumnParallelLinear optional type.")
 
     def generate(self, prompt: str) -> GenerationResult:
         if self.model is None or self.tokenizer is None or self.torch is None:
