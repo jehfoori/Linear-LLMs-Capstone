@@ -3,6 +3,7 @@ architecture: attention
 model_id: hazyresearch/attn-360m
 tokenizer_id: gpt2
 label: Attention 360M HazyResearch
+revision: d29c38ab09b321b24a588d089053cbbe8a447b2f
 dtype: bfloat16
 device: cuda
 max_new_tokens: 8

@@ -3,6 +3,7 @@ architecture: based
 model_id: hazyresearch/based-1b
 tokenizer_id: gpt2
 label: Based 1.4B HazyResearch
+revision: 21235f3601fe231d7485c55595b6a2e36f11dee7
 dtype: bfloat16
 device: cuda
 max_new_tokens: 8

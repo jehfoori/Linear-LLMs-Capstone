@@ -3,6 +3,7 @@ architecture: mamba
 model_id: hazyresearch/mamba-1b
 tokenizer_id: gpt2
 label: Mamba 1.4B HazyResearch
+revision: 8500eb0f1da16a1e2647a5551fa2405f119fc208
 dtype: bfloat16
 device: cuda
 max_new_tokens: 8

@@ -3,6 +3,7 @@ architecture: based
 model_id: hazyresearch/based-360m
 tokenizer_id: gpt2
 label: Based 360M HazyResearch
+revision: 4a63ec61ddb6043a88c198463a7ae75fa90d4038
 dtype: bfloat16
 device: cuda
 max_new_tokens: 8

@@ -56,6 +56,26 @@ projection weights, and records missing/unexpected keys in
 SwiGLU activation to an equivalent pure PyTorch fallback because that Triton
 kernel is unstable in the clean Torch 2.5 stack.
 
+For the HazyResearch Based/Mamba/Attention comparison, use a separate Python
+3.11 environment. The Based package and its CUDA extensions expect torch to be
+installed before build metadata is prepared, so install it in phases:
+
+```bash
+python3.11 -m venv /workspace/.venv-based
+source /workspace/.venv-based/bin/activate
+pip install --upgrade pip wheel
+pip install -r requirements/based-base.txt
+pip install --no-build-isolation -r requirements/based-kernels.txt
+git config --global url.https://github.com/.insteadOf git@github.com:
+pip install --no-build-isolation -r requirements/based-package.txt
+pip install huggingface_hub==0.23.5
+pip install -e .
+```
+
+The final `huggingface_hub` reinstall resolves a transitive
+`accelerate`/`huggingface_hub` mismatch while preserving the Based model-loading
+path.
+
 ## Core Commands
 
 Generate a tiny smoke dataset:

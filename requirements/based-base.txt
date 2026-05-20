@@ -2,13 +2,12 @@
 torch==2.1.2
 torchvision==0.16.2
 torchaudio==2.1.2
+setuptools<70
+numpy<2
 packaging
 ninja
 einops
 transformers==4.36.2
-huggingface_hub
+huggingface_hub==0.23.5
 safetensors
 sentencepiece
-mamba-ssm==1.2.0.post1
-causal-conv1d==1.2.0.post2
-git+https://github.com/HazyResearch/based.git
