@@ -47,13 +47,14 @@ pip install -r requirements/gated-deltanet.txt
 pip install -e .
 ```
 
-This loads FLA registrations with `torch==2.5.1`, `triton==3.1.0`, and
-`flash-linear-attention==0.3.2`. The public checkpoint is loaded through the
-dedicated `gated_deltanet_converted` runner, which patches the missing
-`intermediate_size`, splits fused MLP gate/up projection weights, and records
-missing/unexpected keys in `model_load_report.json`. The config disables fused
-SwiGLU and patches the SwiGLU activation to an equivalent pure PyTorch fallback
-because that Triton kernel is unstable in the clean Torch 2.5 stack.
+This loads FLA registrations with `torch==2.5.1`, `triton==3.1.0`,
+`flash-linear-attention==0.3.2`, and a matched `causal-conv1d` wheel. The
+public checkpoint is loaded through the dedicated `gated_deltanet_converted`
+runner, which patches the missing `intermediate_size`, splits fused MLP gate/up
+projection weights, and records missing/unexpected keys in
+`model_load_report.json`. The config disables fused SwiGLU and patches the
+SwiGLU activation to an equivalent pure PyTorch fallback because that Triton
+kernel is unstable in the clean Torch 2.5 stack.
 
 ## Core Commands
 

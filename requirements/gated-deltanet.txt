@@ -9,3 +9,4 @@ huggingface_hub
 einops
 flash-linear-attention==0.3.2
 fla-core==0.3.2
+https://github.com/Dao-AILab/causal-conv1d/releases/download/v1.5.3.post1/causal_conv1d-1.5.3.post1+cu12torch2.5cxx11abiFALSE-cp311-cp311-linux_x86_64.whl
