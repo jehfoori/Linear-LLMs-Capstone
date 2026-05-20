@@ -498,6 +498,111 @@ class GatedDeltaNetConvertedRunner:
         )
 
 
+class HazyResearchLMRunner:
+    def __init__(self, config: dict[str, Any]):
+        self.config = config
+        self.model_id = config["model_id"]
+        self.tokenizer_id = config.get("tokenizer_id", "gpt2")
+        self.revision = config.get("revision")
+        self.tokenizer_revision = config.get("tokenizer_revision")
+        self.architecture = config.get("architecture", "based")
+        self.label = config.get("label", self.model_id)
+        self.dtype_name = config.get("dtype", "bfloat16")
+        self.device = config.get("device", "cuda")
+        self.max_new_tokens = int(config.get("max_new_tokens", 8))
+        self.load_report = ModelLoadReport(model_id=self.model_id, revision=self.revision, notes=[])
+        self.tokenizer = None
+        self.model = None
+        self.torch = None
+
+    def load(self) -> ModelLoadReport:
+        try:
+            import torch
+            from huggingface_hub import snapshot_download
+            from transformers import AutoTokenizer
+
+            self.torch = torch
+            dtype = getattr(torch, self.dtype_name)
+            tokenizer_kwargs = {}
+            if self.tokenizer_revision:
+                tokenizer_kwargs["revision"] = self.tokenizer_revision
+
+            model_source = self.model_id
+            if self.revision:
+                model_source = snapshot_download(self.model_id, revision=self.revision)
+                self.load_report.notes.append(f"Resolved model revision to snapshot: {model_source}")
+
+            if self.tokenizer_id != self.model_id:
+                self.load_report.notes.append(f"Using tokenizer_id={self.tokenizer_id!r}")
+            if self.tokenizer_revision:
+                self.load_report.notes.append(f"Using tokenizer_revision={self.tokenizer_revision!r}")
+            self.tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_id, **tokenizer_kwargs)
+
+            model_cls = self._model_class()
+            self.model = model_cls.from_pretrained_hf(model_source).to(device=self.device, dtype=dtype)
+            self.model.eval()
+            self.load_report.notes.append(f"Loaded HazyResearch {self.architecture!r} checkpoint.")
+            self.load_report.num_parameters = sum(parameter.numel() for parameter in self.model.parameters())
+            self.load_report.loaded = True
+        except Exception as exc:
+            self.load_report.error = repr(exc)
+            raise
+        return self.load_report
+
+    def _model_class(self) -> Any:
+        if self.architecture == "based":
+            from based.models.gpt import GPTLMHeadModel
+
+            return GPTLMHeadModel
+        if self.architecture == "attention":
+            from based.models.transformer.gpt import GPTLMHeadModel
+
+            return GPTLMHeadModel
+        if self.architecture == "mamba":
+            from based.models.mamba import MambaLMHeadModel
+
+            return MambaLMHeadModel
+        raise ValueError(f"Unknown HazyResearch architecture: {self.architecture!r}")
+
+    def generate(self, prompt: str) -> GenerationResult:
+        if self.model is None or self.tokenizer is None or self.torch is None:
+            raise RuntimeError("Model must be loaded before generation.")
+
+        torch = self.torch
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.reset_peak_memory_stats()
+
+        input_ids = self.tokenizer.encode(prompt, return_tensors="pt").to(self.device)
+        input_len = int(input_ids.shape[1])
+        start = time.time()
+
+        with torch.inference_mode():
+            output_ids = self.model.generate(input_ids, max_length=input_len + self.max_new_tokens)
+
+        elapsed = time.time() - start
+        generated_ids = output_ids[0, input_len:].detach().cpu()
+        generated_text = self.tokenizer.decode(generated_ids, skip_special_tokens=True)
+        peak_mem_gib = None
+        if torch.cuda.is_available():
+            peak_mem_gib = torch.cuda.max_memory_allocated() / 1024**3
+
+        del input_ids
+        del output_ids
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+        return GenerationResult(
+            generated_text=generated_text,
+            input_tokens=input_len,
+            new_tokens=int(len(generated_ids)),
+            elapsed_sec=elapsed,
+            peak_mem_gib=peak_mem_gib,
+        )
+
+
 def build_runner(config: dict[str, Any]) -> ModelRunner:
     runner_type = config.get("runner", "transformers_causal_lm")
     if runner_type == "mock":
@@ -508,4 +613,6 @@ def build_runner(config: dict[str, Any]) -> ModelRunner:
         return MambaSSMLMRunner(config)
     if runner_type == "gated_deltanet_converted":
         return GatedDeltaNetConvertedRunner(config)
+    if runner_type == "hazyresearch_lm":
+        return HazyResearchLMRunner(config)
     raise ValueError(f"Unknown runner type: {runner_type}")

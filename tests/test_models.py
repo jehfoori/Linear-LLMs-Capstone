@@ -1,4 +1,4 @@
-from niah.models import GatedDeltaNetConvertedRunner, MambaSSMLMRunner, build_runner
+from niah.models import GatedDeltaNetConvertedRunner, HazyResearchLMRunner, MambaSSMLMRunner, build_runner
 
 
 def test_build_runner_supports_mamba_ssm_without_importing_dependencies():
@@ -25,3 +25,16 @@ def test_build_runner_supports_converted_gated_deltanet_without_importing_depend
     assert isinstance(runner, GatedDeltaNetConvertedRunner)
     assert runner.load_report.manual_config_patch is True
     assert runner.load_report.manual_weight_conversion is True
+
+
+def test_build_runner_supports_hazyresearch_without_importing_dependencies():
+    runner = build_runner(
+        {
+            "runner": "hazyresearch_lm",
+            "model_id": "hazyresearch/based-360m",
+            "architecture": "based",
+        }
+    )
+
+    assert isinstance(runner, HazyResearchLMRunner)
+    assert runner.label == "hazyresearch/based-360m"

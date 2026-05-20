@@ -1,0 +1,8 @@
+runner: hazyresearch_lm
+architecture: based
+model_id: hazyresearch/based-360m
+tokenizer_id: gpt2
+label: Based 360M HazyResearch
+dtype: bfloat16
+device: cuda
+max_new_tokens: 8

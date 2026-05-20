@@ -1,0 +1,8 @@
+runner: hazyresearch_lm
+architecture: based
+model_id: hazyresearch/based-1b
+tokenizer_id: gpt2
+label: Based 1.4B HazyResearch
+dtype: bfloat16
+device: cuda
+max_new_tokens: 8

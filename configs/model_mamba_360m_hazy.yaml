@@ -1,0 +1,8 @@
+runner: hazyresearch_lm
+architecture: mamba
+model_id: hazyresearch/mamba-360m
+tokenizer_id: gpt2
+label: Mamba 360M HazyResearch
+dtype: bfloat16
+device: cuda
+max_new_tokens: 8

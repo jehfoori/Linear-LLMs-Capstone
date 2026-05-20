@@ -1,0 +1,14 @@
+--extra-index-url https://download.pytorch.org/whl/cu118
+torch==2.1.2
+torchvision==0.16.2
+torchaudio==2.1.2
+packaging
+ninja
+einops
+transformers==4.36.2
+huggingface_hub
+safetensors
+sentencepiece
+mamba-ssm==1.2.0.post1
+causal-conv1d==1.2.0.post2
+git+https://github.com/HazyResearch/based.git
