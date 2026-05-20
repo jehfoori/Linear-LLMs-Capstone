@@ -29,6 +29,8 @@ gated-deltanet = [
   "accelerate>=0.34,<2",
   "safetensors",
   "sentencepiece",
+  "protobuf",
+  "flash-linear-attention==0.3.2",
   "huggingface_hub",
 ]
 

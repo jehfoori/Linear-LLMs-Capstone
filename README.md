@@ -26,6 +26,33 @@ pip install -e ".[mamba2]"
 pip install -e ".[gated-deltanet]"
 ```
 
+For the official `mamba-ssm` Mamba-2 path, use Python 3.11 and the matched
+Torch 2.3 wheels. This avoids local CUDA extension builds:
+
+```bash
+python3.11 -m venv .venv-mamba-official
+source .venv-mamba-official/bin/activate
+pip install --upgrade pip
+pip install torch==2.3.0 transformers==4.46.3 packaging ninja einops
+pip install --no-deps \
+  "https://github.com/Dao-AILab/causal-conv1d/releases/download/v1.4.0/causal_conv1d-1.4.0+cu122torch2.3cxx11abiFALSE-cp311-cp311-linux_x86_64.whl" \
+  "https://github.com/state-spaces/mamba/releases/download/v2.2.4/mamba_ssm-2.2.4+cu12torch2.3cxx11abiFALSE-cp311-cp311-linux_x86_64.whl"
+pip install -e .
+```
+
+For the Gated DeltaNet path, the clean import stack found on the A100 pod is:
+
+```bash
+python3.11 -m venv .venv-gdn
+source .venv-gdn/bin/activate
+pip install --upgrade pip
+pip install -e ".[gated-deltanet]"
+```
+
+This loads FLA registrations with `torch==2.5.1`, `triton==3.1.0`, and
+`flash-linear-attention==0.3.2`. The current public checkpoint still needs a
+dedicated config/weight conversion loader before evaluation.
+
 ## Core Commands
 
 Generate a tiny smoke dataset:
