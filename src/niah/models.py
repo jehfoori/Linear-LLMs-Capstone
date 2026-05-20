@@ -510,7 +510,13 @@ class HazyResearchLMRunner:
         self.dtype_name = config.get("dtype", "bfloat16")
         self.device = config.get("device", "cuda")
         self.max_new_tokens = int(config.get("max_new_tokens", 8))
-        self.load_report = ModelLoadReport(model_id=self.model_id, revision=self.revision, notes=[])
+        self.config_patch = dict(config.get("config_patch", {}) or {})
+        self.load_report = ModelLoadReport(
+            model_id=self.model_id,
+            revision=self.revision,
+            manual_config_patch=bool(self.config_patch),
+            notes=[],
+        )
         self.tokenizer = None
         self.model = None
         self.torch = None
@@ -539,6 +545,7 @@ class HazyResearchLMRunner:
             self.tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_id, **tokenizer_kwargs)
 
             model_cls = self._model_class()
+            self._patch_hazy_config_loader()
             self.model = model_cls.from_pretrained_hf(model_source).to(device=self.device, dtype=dtype)
             self.model.eval()
             self.load_report.notes.append(f"Loaded HazyResearch {self.architecture!r} checkpoint.")
@@ -563,6 +570,27 @@ class HazyResearchLMRunner:
 
             return MambaLMHeadModel
         raise ValueError(f"Unknown HazyResearch architecture: {self.architecture!r}")
+
+    def _patch_hazy_config_loader(self) -> None:
+        if not self.config_patch:
+            return
+
+        import based.utils.hf as based_hf
+
+        original_load_config_hf = based_hf.load_config_hf
+
+        def load_config_hf_with_patch(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            config_data = dict(original_load_config_hf(*args, **kwargs))
+            config_data.update(self.config_patch)
+            return config_data
+
+        based_hf.load_config_hf = load_config_hf_with_patch
+        if self.architecture == "based":
+            import based.models.gpt as based_gpt
+
+            based_gpt.load_config_hf = load_config_hf_with_patch
+        for key, value in self.config_patch.items():
+            self.load_report.notes.append(f"Applied explicit HazyResearch config patch: {key}={value!r}")
 
     def generate(self, prompt: str) -> GenerationResult:
         if self.model is None or self.tokenizer is None or self.torch is None:

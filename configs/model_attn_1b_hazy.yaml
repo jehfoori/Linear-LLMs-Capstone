@@ -7,3 +7,6 @@ revision: 99f1aec31026d0c1168d056011110ece30524666
 dtype: bfloat16
 device: cuda
 max_new_tokens: 8
+config_patch:
+  fused_bias_fc: false
+  fused_dropout_add_ln: false
