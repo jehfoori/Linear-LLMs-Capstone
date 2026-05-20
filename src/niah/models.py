@@ -4,6 +4,7 @@ import gc
 import math
 import time
 from dataclasses import asdict, dataclass, field
+from pathlib import Path
 from typing import Any, Protocol
 
 
@@ -330,7 +331,7 @@ class GatedDeltaNetConvertedRunner:
             import torch
             import fla.models  # noqa: F401
             import fla.modules.mlp as fla_mlp
-            from huggingface_hub import hf_hub_download
+            from huggingface_hub import hf_hub_download, snapshot_download
             from safetensors.torch import load_file
             from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
@@ -360,10 +361,13 @@ class GatedDeltaNetConvertedRunner:
                 self.load_report.notes.append(f"Applied explicit config patch: {key}={value!r}")
 
             self.model = AutoModelForCausalLM.from_config(config, trust_remote_code=self.trust_remote_code)
-            checkpoint_path = hf_hub_download(self.model_id, self.checkpoint_filename, **download_kwargs)
-            raw_state = load_file(checkpoint_path, device="cpu")
-            converted_state, converted_count = self._convert_state_dict(raw_state, int(config.intermediate_size))
-            del raw_state
+            converted_state, converted_count = self._load_converted_state_dict(
+                hf_hub_download=hf_hub_download,
+                snapshot_download=snapshot_download,
+                load_file=load_file,
+                intermediate_size=int(config.intermediate_size),
+                download_kwargs=download_kwargs,
+            )
 
             incompatible = self.model.load_state_dict(converted_state, strict=False)
             del converted_state
@@ -392,6 +396,34 @@ class GatedDeltaNetConvertedRunner:
             "Patched intermediate_size from hidden_size and hidden_ratio: "
             f"{config.intermediate_size}."
         )
+
+    def _load_converted_state_dict(
+        self,
+        *,
+        hf_hub_download: Any,
+        snapshot_download: Any,
+        load_file: Any,
+        intermediate_size: int,
+        download_kwargs: dict[str, Any],
+    ) -> tuple[dict[str, Any], int]:
+        converted_state: dict[str, Any] = {}
+        converted_count = 0
+        if self.checkpoint_filename:
+            checkpoint_paths = [hf_hub_download(self.model_id, self.checkpoint_filename, **download_kwargs)]
+        else:
+            snapshot_path = snapshot_download(self.model_id, allow_patterns=["*.safetensors"], **download_kwargs)
+            checkpoint_paths = sorted(str(path) for path in Path(snapshot_path).glob("*.safetensors"))
+            if not checkpoint_paths:
+                raise FileNotFoundError(f"No safetensors checkpoints found in snapshot for {self.model_id!r}.")
+            self.load_report.notes.append(f"Loaded sharded safetensors checkpoint with {len(checkpoint_paths)} files.")
+
+        for checkpoint_path in checkpoint_paths:
+            raw_state = load_file(checkpoint_path, device="cpu")
+            shard_state, shard_count = self._convert_state_dict(raw_state, intermediate_size)
+            converted_state.update(shard_state)
+            converted_count += shard_count
+            del raw_state
+        return converted_state, converted_count
 
     def _convert_state_dict(self, raw_state: dict[str, Any], intermediate_size: int) -> tuple[dict[str, Any], int]:
         converted_state = {}
