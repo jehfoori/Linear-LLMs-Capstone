@@ -31,6 +31,7 @@ gated-deltanet = [
   "sentencepiece",
   "protobuf",
   "flash-linear-attention==0.3.2",
+  "fla-core==0.3.2",
   "huggingface_hub",
 ]
 

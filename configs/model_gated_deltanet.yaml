@@ -1,4 +1,4 @@
-runner: transformers_causal_lm
+runner: gated_deltanet_converted
 model_id: linear-moe-hub/Gated-Deltanet-340M
 label: Gated DeltaNet 340M
 revision: null
@@ -8,5 +8,8 @@ device: cuda
 max_new_tokens: 8
 do_sample: false
 use_cache: true
-config_patch: {}
-manual_weight_conversion: false
+checkpoint_filename: model.safetensors
+patch_swiglu_triton: true
+config_patch:
+  fuse_swiglu: false
+manual_weight_conversion: true
