@@ -1,0 +1,16 @@
+runner: gated_deltanet_converted
+model_id: m-a-p/340M-20B-GatedDeltaNet-pure-baseline
+label: Gated DeltaNet 340M 20B Pure
+revision: 14661a98768e1f5d5493ff7b18f2d6809717a4c8
+tokenizer_revision: 14661a98768e1f5d5493ff7b18f2d6809717a4c8
+trust_remote_code: true
+dtype: bfloat16
+device: cuda
+max_new_tokens: 8
+do_sample: false
+use_cache: true
+checkpoint_filename: model.safetensors
+patch_swiglu_triton: true
+config_patch:
+  fuse_swiglu: false
+manual_weight_conversion: true
