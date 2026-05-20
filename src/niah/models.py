@@ -511,6 +511,7 @@ class HazyResearchLMRunner:
         self.device = config.get("device", "cuda")
         self.max_new_tokens = int(config.get("max_new_tokens", 8))
         self.config_patch = dict(config.get("config_patch", {}) or {})
+        self.constructor_kwargs = dict(config.get("constructor_kwargs", {}) or {})
         self.load_report = ModelLoadReport(
             model_id=self.model_id,
             revision=self.revision,
@@ -547,7 +548,10 @@ class HazyResearchLMRunner:
             model_cls = self._model_class()
             self._patch_hazy_optional_types()
             self._patch_hazy_config_loader()
-            self.model = model_cls.from_pretrained_hf(model_source).to(device=self.device, dtype=dtype)
+            if self.architecture == "attention" and self.constructor_kwargs:
+                self.model = self._load_attention_model(model_source=model_source).to(device=self.device, dtype=dtype)
+            else:
+                self.model = model_cls.from_pretrained_hf(model_source).to(device=self.device, dtype=dtype)
             self.model.eval()
             self.load_report.notes.append(f"Loaded HazyResearch {self.architecture!r} checkpoint.")
             self.load_report.num_parameters = sum(parameter.numel() for parameter in self.model.parameters())
@@ -609,6 +613,29 @@ class HazyResearchLMRunner:
             if transformer_gpt.ColumnParallelLinear is None:
                 transformer_gpt.ColumnParallelLinear = UnavailableColumnParallelLinear
                 self.load_report.notes.append("Patched missing ColumnParallelLinear optional type.")
+
+    def _load_attention_model(self, *, model_source: str) -> Any:
+        import re
+        import torch
+        import based.utils.hf as based_hf
+        import based.models.transformer.gpt as transformer_gpt
+
+        config_data = based_hf.load_config_hf(model_source)
+        config = transformer_gpt.GPT2Config(**config_data)
+        model = transformer_gpt.GPTLMHeadModel(
+            config=config,
+            device=self.device,
+            dtype=torch.float16,
+            **self.constructor_kwargs,
+        )
+        state_dict = transformer_gpt.state_dict_from_pretrained(model_source, dtype=torch.float16)
+        state_dict = {re.sub("^model\\.", "", key): value for key, value in state_dict.items()}
+        state_dict = {key: value for key, value in state_dict.items() if "metrics" not in key}
+        incompatible = model.load_state_dict(state_dict, strict=True)
+        self.load_report.missing_keys = list(incompatible.missing_keys)
+        self.load_report.unexpected_keys = list(incompatible.unexpected_keys)
+        self.load_report.notes.append(f"Used attention constructor kwargs: {self.constructor_kwargs!r}")
+        return model
 
     def generate(self, prompt: str) -> GenerationResult:
         if self.model is None or self.tokenizer is None or self.torch is None:
