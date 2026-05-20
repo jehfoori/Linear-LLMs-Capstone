@@ -2,7 +2,8 @@ runner: mamba_ssm_lm
 model_id: state-spaces/mamba2-370m
 tokenizer_id: EleutherAI/gpt-neox-20b
 label: Mamba-2 370M Official
-revision: null
+revision: 0eb4c69a118dc9b7568ce0b52990dc8f99967983
+tokenizer_revision: c292233c833e336628618a88a648727eb3dff0a7
 dtype: bfloat16
 device: cuda
 max_new_tokens: 8

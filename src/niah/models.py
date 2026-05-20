@@ -79,6 +79,7 @@ class TransformersCausalLMRunner:
         self.model_id = config["model_id"]
         self.tokenizer_id = config.get("tokenizer_id", self.model_id)
         self.revision = config.get("revision")
+        self.tokenizer_revision = config.get("tokenizer_revision", self.revision)
         self.label = config.get("label", self.model_id)
         self.trust_remote_code = bool(config.get("trust_remote_code", False))
         self.dtype_name = config.get("dtype", "bfloat16")
@@ -113,12 +114,15 @@ class TransformersCausalLMRunner:
                 "trust_remote_code": self.trust_remote_code,
                 "low_cpu_mem_usage": True,
             }
+            if self.tokenizer_revision:
+                tokenizer_kwargs["revision"] = self.tokenizer_revision
             if self.revision:
-                tokenizer_kwargs["revision"] = self.revision
                 model_kwargs["revision"] = self.revision
 
             if self.tokenizer_id != self.model_id:
                 self.load_report.notes.append(f"Using tokenizer_id={self.tokenizer_id!r}")
+            if self.tokenizer_revision:
+                self.load_report.notes.append(f"Using tokenizer_revision={self.tokenizer_revision!r}")
             self.tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_id, **tokenizer_kwargs)
             config = AutoConfig.from_pretrained(self.model_id, trust_remote_code=self.trust_remote_code, revision=self.revision)
             for key, value in self.config_patch.items():
@@ -194,6 +198,7 @@ class MambaSSMLMRunner:
         self.model_id = config["model_id"]
         self.tokenizer_id = config.get("tokenizer_id", "EleutherAI/gpt-neox-20b")
         self.revision = config.get("revision")
+        self.tokenizer_revision = config.get("tokenizer_revision", self.revision)
         self.label = config.get("label", self.model_id)
         self.dtype_name = config.get("dtype", "bfloat16")
         self.device = config.get("device", "cuda")
@@ -210,22 +215,31 @@ class MambaSSMLMRunner:
     def load(self) -> ModelLoadReport:
         try:
             import torch
+            from huggingface_hub import snapshot_download
             from mamba_ssm.models.mixer_seq_simple import MambaLMHeadModel
             from transformers import AutoTokenizer
 
             self.torch = torch
             dtype = getattr(torch, self.dtype_name)
             tokenizer_kwargs = {}
-            model_kwargs = {}
+            if self.tokenizer_revision:
+                tokenizer_kwargs["revision"] = self.tokenizer_revision
+            model_source = self.model_id
             if self.revision:
-                tokenizer_kwargs["revision"] = self.revision
-                model_kwargs["revision"] = self.revision
+                model_source = snapshot_download(
+                    self.model_id,
+                    revision=self.revision,
+                    allow_patterns=["config.json", "pytorch_model.bin"],
+                )
+                self.load_report.notes.append(f"Resolved model revision to snapshot: {model_source}")
 
             self.load_report.notes.append("Loaded through mamba_ssm.models.mixer_seq_simple.MambaLMHeadModel.")
             if self.tokenizer_id != self.model_id:
                 self.load_report.notes.append(f"Using tokenizer_id={self.tokenizer_id!r}")
+            if self.tokenizer_revision:
+                self.load_report.notes.append(f"Using tokenizer_revision={self.tokenizer_revision!r}")
             self.tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_id, **tokenizer_kwargs)
-            self.model = MambaLMHeadModel.from_pretrained(self.model_id, device=self.device, dtype=dtype, **model_kwargs)
+            self.model = MambaLMHeadModel.from_pretrained(model_source, device=self.device, dtype=dtype)
             self.model.eval()
             self.load_report.num_parameters = sum(parameter.numel() for parameter in self.model.parameters())
             self.load_report.loaded = True
@@ -289,6 +303,7 @@ class GatedDeltaNetConvertedRunner:
         self.model_id = config["model_id"]
         self.tokenizer_id = config.get("tokenizer_id", self.model_id)
         self.revision = config.get("revision")
+        self.tokenizer_revision = config.get("tokenizer_revision", self.revision)
         self.label = config.get("label", self.model_id)
         self.trust_remote_code = bool(config.get("trust_remote_code", True))
         self.dtype_name = config.get("dtype", "bfloat16")
@@ -327,13 +342,16 @@ class GatedDeltaNetConvertedRunner:
             tokenizer_kwargs = {"trust_remote_code": self.trust_remote_code}
             config_kwargs = {"trust_remote_code": self.trust_remote_code}
             download_kwargs = {}
+            if self.tokenizer_revision:
+                tokenizer_kwargs["revision"] = self.tokenizer_revision
             if self.revision:
-                tokenizer_kwargs["revision"] = self.revision
                 config_kwargs["revision"] = self.revision
                 download_kwargs["revision"] = self.revision
 
             if self.tokenizer_id != self.model_id:
                 self.load_report.notes.append(f"Using tokenizer_id={self.tokenizer_id!r}")
+            if self.tokenizer_revision:
+                self.load_report.notes.append(f"Using tokenizer_revision={self.tokenizer_revision!r}")
             self.tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_id, **tokenizer_kwargs)
             config = AutoConfig.from_pretrained(self.model_id, **config_kwargs)
             self._patch_intermediate_size(config)
