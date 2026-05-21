@@ -1,4 +1,9 @@
-from niah.data import build_length_counter, generate_dataset, generate_distractor_example
+from niah.data import (
+    build_length_counter,
+    generate_dataset,
+    generate_distractor_example,
+    generate_variable_tracking_example,
+)
 
 
 def test_distractor_example_invariants():
@@ -34,6 +39,31 @@ def test_dataset_generation_is_deterministic():
     assert first == second
     assert len(first) == 6
     assert len({row["example_id"] for row in first}) == 6
+
+
+def test_variable_tracking_example_invariants():
+    row = generate_variable_tracking_example(
+        example_id="variable_tracking_1024_0000",
+        target_length=256,
+        seed=456,
+        num_distractors=5,
+        num_hops=2,
+    )
+
+    records = row["records"]
+    target_records = [record for record in records if record["is_target"]]
+    assert row["task"] == "variable_tracking"
+    assert row["num_hops"] == 2
+    assert len(records) == 8
+    assert len(target_records) == 3
+    assert row["needle_sentence"].endswith(row["answer"])
+    assert row["prompt"].count(row["needle_sentence"]) == 1
+    assert row["answer"] in row["prompt"]
+    assert f"VAR_RECORD[{row['key']}] =" in row["prompt"].split("End of document.")[-1]
+    assert row["query_record_index"] != row["target_record_index"]
+    assert len(row["chain_keys"]) == 3
+    assert len({record["key"] for record in records}) == len(records)
+    assert len({record["answer"] for record in records if not record["is_target"]}) == 5
 
 
 def test_default_length_counter_is_approx_words():

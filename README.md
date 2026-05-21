@@ -147,6 +147,25 @@ python -m niah.cli.compare_runs \
   --out results/comparison_d20_paired
 ```
 
+## RULER-Style Synthetic Extension
+
+The HazyResearch Based/Mamba/Attention comparison can also be run as a small
+RULER-inspired synthetic suite at nominal 1k and 2k GPT-2-token contexts with
+30 examples per length:
+
+- `single_needle`: one passkey record and one exact numeric query.
+- `multi_key`: one target passkey plus 20 same-format distractor records.
+- `variable_tracking`: a two-hop variable reference chain plus 20 distractor bindings.
+
+On the A100 pod, run:
+
+```bash
+scripts/run_hazy_ruler_n30_l1024_2048.sh
+```
+
+Outputs are written under `results/hazy_ruler_n30_l1024_2048/`, with one run
+directory per task/model and comparison tables under `comparisons/`.
+
 ## Design Notes
 
 - Datasets are canonical JSONL prompt files.

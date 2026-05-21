@@ -1,0 +1,4 @@
+task: passkey_single
+target_lengths: [1024, 2048]
+n_per_length: 30
+seed: 951024

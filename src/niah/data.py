@@ -54,6 +54,42 @@ KEY_WORDS_B = [
     "cloud",
 ]
 
+VARIABLE_WORDS_A = [
+    "amber",
+    "basil",
+    "cobalt",
+    "delta",
+    "ember",
+    "fable",
+    "ginger",
+    "hazel",
+    "indigo",
+    "jade",
+    "kelp",
+    "lilac",
+    "marble",
+    "nylon",
+    "opal",
+]
+
+VARIABLE_WORDS_B = [
+    "anchor",
+    "beacon",
+    "cipher",
+    "drift",
+    "echo",
+    "flare",
+    "grove",
+    "hinge",
+    "island",
+    "jewel",
+    "kernel",
+    "ledger",
+    "matrix",
+    "notion",
+    "orbit",
+]
+
 
 def load_config(path: str | Path) -> dict[str, Any]:
     path = Path(path)
@@ -173,6 +209,18 @@ def make_unique_key(rng: random.Random, used_keys: set[str]) -> str:
         if key not in used_keys:
             used_keys.add(key)
             return key
+
+
+def make_variable(rng: random.Random) -> str:
+    return f"{rng.choice(VARIABLE_WORDS_A)}_{rng.choice(VARIABLE_WORDS_B)}"
+
+
+def make_unique_variable(rng: random.Random, used_variables: set[str]) -> str:
+    while True:
+        variable = make_variable(rng)
+        if variable not in used_variables:
+            used_variables.add(variable)
+            return variable
 
 
 def _filler_until(target_length: int, make_prompt, count_length=count_approx_tokens) -> tuple[str, int]:
@@ -306,12 +354,114 @@ def generate_distractor_example(
     }
 
 
+def generate_variable_tracking_example(
+    *,
+    example_id: str,
+    target_length: int,
+    seed: int,
+    num_distractors: int,
+    num_hops: int = 2,
+    count_length=count_approx_tokens,
+    length_metric: str = "approx_words",
+) -> dict[str, Any]:
+    rng = random.Random(seed)
+    used_variables: set[str] = set()
+    used_answers: set[str] = set()
+
+    target_answer = make_answer(rng)
+    used_answers.add(target_answer)
+    chain_variables = [make_unique_variable(rng, used_variables) for _ in range(num_hops + 1)]
+    target_variable = chain_variables[-1]
+
+    records: list[dict[str, Any]] = [
+        {
+            "key": chain_variables[0],
+            "answer": target_answer,
+            "is_target": True,
+            "record_type": "value",
+            "line": f"VAR_RECORD[{chain_variables[0]}] = {target_answer}",
+        }
+    ]
+    for index in range(1, len(chain_variables)):
+        records.append(
+            {
+                "key": chain_variables[index],
+                "answer": target_answer,
+                "is_target": True,
+                "record_type": "alias",
+                "source_key": chain_variables[index - 1],
+                "line": f"VAR_RECORD[{chain_variables[index]}] = VAR_RECORD[{chain_variables[index - 1]}]",
+            }
+        )
+
+    for _ in range(num_distractors):
+        variable = make_unique_variable(rng, used_variables)
+        answer = make_answer(rng)
+        while answer in used_answers:
+            answer = make_answer(rng)
+        used_answers.add(answer)
+        records.append(
+            {
+                "key": variable,
+                "answer": answer,
+                "is_target": False,
+                "record_type": "value",
+                "line": f"VAR_RECORD[{variable}] = {answer}",
+            }
+        )
+
+    rng.shuffle(records)
+    source_record_index = next(i for i, record in enumerate(records) if record["key"] == chain_variables[0])
+    query_record_index = next(i for i, record in enumerate(records) if record["key"] == target_variable)
+
+    def make_prompt(filler: str) -> str:
+        segment_size = max(1, len(filler) // (len(records) + 1))
+        parts = [
+            "Rules:\n"
+            "A VAR_RECORD can store either a number or a reference to another VAR_RECORD.\n"
+            "If a VAR_RECORD points to another VAR_RECORD, it has the same numeric value.\n\n"
+        ]
+        for i, record in enumerate(records):
+            parts.append(filler[i * segment_size : (i + 1) * segment_size])
+            parts.append("\n" + record["line"] + "\n")
+        parts.append(filler[len(records) * segment_size :])
+        query = (
+            "\n\nEnd of document.\n"
+            "Resolve the requested variable and write only its numeric value.\n"
+            f"VAR_RECORD[{target_variable}] ="
+        )
+        return "Document:\n\n" + "".join(parts) + query
+
+    prompt, length_count = _filler_until(target_length, make_prompt, count_length)
+    return {
+        "example_id": example_id,
+        "task": "variable_tracking",
+        "target_length": target_length,
+        "approx_tokens": length_count,
+        "length_metric": length_metric,
+        "seed": seed,
+        "key": target_variable,
+        "answer": target_answer,
+        "needle_sentence": records[source_record_index]["line"],
+        "needle_position_fraction": (source_record_index + 1) / (len(records) + 1),
+        "target_record_index": source_record_index,
+        "query_record_index": query_record_index,
+        "query_record_position_fraction": (query_record_index + 1) / (len(records) + 1),
+        "num_distractors": num_distractors,
+        "num_hops": num_hops,
+        "chain_keys": chain_variables,
+        "records": records,
+        "prompt": prompt,
+    }
+
+
 def generate_dataset(config: dict[str, Any]) -> list[dict[str, Any]]:
     task = config.get("task", "passkey_distractors")
     target_lengths = [int(v) for v in config.get("target_lengths", [1024, 4096, 8192, 16384])]
     n_per_length = int(config.get("n_per_length", 50))
     base_seed = int(config.get("seed", 812345))
     num_distractors = int(config.get("num_distractors", 20))
+    num_hops = int(config.get("num_hops", 2))
     count_length, length_metric = build_length_counter(config)
 
     rows: list[dict[str, Any]] = []
@@ -333,6 +483,16 @@ def generate_dataset(config: dict[str, Any]) -> list[dict[str, Any]]:
                     target_length=target_length,
                     seed=seed,
                     num_distractors=num_distractors,
+                    count_length=count_length,
+                    length_metric=length_metric,
+                )
+            elif task == "variable_tracking":
+                row = generate_variable_tracking_example(
+                    example_id=example_id,
+                    target_length=target_length,
+                    seed=seed,
+                    num_distractors=num_distractors,
+                    num_hops=num_hops,
                     count_length=count_length,
                     length_metric=length_metric,
                 )
