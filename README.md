@@ -166,6 +166,23 @@ scripts/run_hazy_ruler_n30_l1024_2048.sh
 Outputs are written under `results/hazy_ruler_n30_l1024_2048/`, with one run
 directory per task/model and comparison tables under `comparisons/`.
 
+## HazyResearch Context Sweep
+
+The context sweep narrows the task set to the two most diagnostic settings and
+adds finer context-length resolution:
+
+- `single_needle`
+- `multi_key`: one target passkey plus 20 same-format distractor records
+
+It uses nominal `512, 768, 1024, 1280, 1536, 1792, 2048, 2560` GPT-2-token
+contexts with 20 examples per length:
+
+```bash
+scripts/run_hazy_context_sweep_n20_l512_2560.sh
+```
+
+Outputs are written under `results/hazy_context_sweep_n20_l512_2560/`.
+
 ## Design Notes
 
 - Datasets are canonical JSONL prompt files.
