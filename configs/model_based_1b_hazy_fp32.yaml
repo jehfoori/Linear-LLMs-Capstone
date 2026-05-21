@@ -1,0 +1,13 @@
+runner: hazyresearch_lm
+architecture: based
+model_id: hazyresearch/based-1b
+tokenizer_id: gpt2
+label: Based 1.4B HazyResearch fp32
+revision: 21235f3601fe231d7485c55595b6a2e36f11dee7
+dtype: float32
+device: cuda
+max_new_tokens: 8
+decode_strategy: recompute
+config_patch:
+  fused_bias_fc: false
+  fused_dropout_add_ln: false
