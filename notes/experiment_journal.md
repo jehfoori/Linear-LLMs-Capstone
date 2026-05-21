@@ -402,3 +402,94 @@ The final framing should be careful:
   distractor-heavy retrieval, but claims should be tied to these public
   checkpoints and this synthetic task setting.
 
+## 19. Clean n30 Context Sweep
+
+We launched the clean final matrix after patching BASED recompute decoding.
+
+Final matrix:
+
+- Models:
+  - Attention 360M.
+  - Attention 1.4B.
+  - Mamba 360M.
+  - Mamba 1.4B.
+  - BASED 360M fp32 with recompute decoding.
+  - BASED 1.4B fp32 with recompute decoding.
+- Tasks:
+  - Single needle.
+  - Multi-key with 20 distractors.
+- Context lengths:
+  - 512, 768, 1024, 1280, 1536, 1792, 2048, 2560.
+- Sample count:
+  - 30 examples per length.
+
+This produced 2880 generations. Results were saved under
+`results/hazy_context_sweep_n30_l512_2560_clean`.
+
+Single-needle results were mostly strong:
+
+- Attention 360M: nearly perfect across all lengths.
+- Attention 1.4B: strong but unexpectedly weaker than Attention 360M at several
+  shorter lengths.
+- Mamba 1.4B, BASED 360M fp32, and BASED 1.4B fp32 were also strong.
+- Mamba 360M degraded more clearly at longer lengths, reaching 19/30 at 2560.
+
+Multi-key retrieval separated the models much more sharply:
+
+- Attention 1.4B was strongest up to 2048 tokens, but collapsed at 2560.
+- Attention 360M retained moderate performance, ending at 7/30 at 2560.
+- Mamba and BASED models performed poorly under 20 distractors, often near
+  floor at longer lengths.
+
+The clean matrix therefore supports the main pattern that simple single-needle
+retrieval is not enough to distinguish these architectures. Distractor-heavy
+key-value binding is much more diagnostic.
+
+## 20. Attention 1.4B Anomaly
+
+The most surprising result in the clean matrix was Attention 1.4B on the
+multi-key task at 2560 tokens. It dropped from 21/30 at 2048 to 1/30 at 2560,
+while Attention 360M retained 7/30 at 2560.
+
+We ran targeted probes to determine whether this was a run artifact.
+
+Diagnostics:
+
+- Exact rerun of the 30 Attention 1.4B multi-key 2560 examples reproduced
+  1/30.
+- Increasing generation length from 8 to 32 new tokens did not help.
+- Recompute decoding did not help.
+- Stricter prompt variants did not rescue the result.
+- An explicit fallback sentinel prompt also did not produce the fallback token.
+
+Prompt variants tested on a 10-example subset:
+
+- Baseline prompt: 0/10.
+- `Only output the numeric value...`: 0/10.
+- `Return only the 7-digit number...`: 1/10.
+- `Return either the matching 7-digit number or ZXQ_UNKNOWN...`: 1/10.
+
+The model never emitted `ZXQ_UNKNOWN`. Instead, it generally resumed
+document-style continuation, such as emitting `PASSKEY_RECORD[...]`, filler
+text, or a wrong number.
+
+Interpretation:
+
+- This does not appear to be a hard context-length limit, since Attention 1.4B
+  scored 30/30 on single-needle at 2560 and the model can execute at that
+  context length.
+- It also does not appear to be the same cache artifact observed in BASED 360M.
+- The likely behavioral diagnosis is task-mode collapse: in the long
+  distractor-heavy prompt, the final query no longer controls generation
+  strongly enough, and the model reverts to high-probability document
+  continuation.
+
+The failure mode differs from the compressed-memory models. Mamba and BASED
+usually still emit numbers, but the numbers are distractors or not in the
+document. Attention 1.4B uniquely often exits the answer format entirely at the
+2560 multi-key setting.
+
+This anomaly should be kept in the results table rather than truncated away,
+but it should be discussed carefully. It is a stable model/prompt behavior in
+our setup, not a clean monotonic context-length trend.
+
