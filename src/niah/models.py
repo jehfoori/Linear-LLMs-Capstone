@@ -510,6 +510,11 @@ class HazyResearchLMRunner:
         self.dtype_name = config.get("dtype", "bfloat16")
         self.device = config.get("device", "cuda")
         self.max_new_tokens = int(config.get("max_new_tokens", 8))
+        self.decode_strategy = config.get("decode_strategy")
+        if self.decode_strategy is None:
+            self.decode_strategy = "recompute" if self.architecture == "based" else "cached"
+        if self.decode_strategy not in {"cached", "recompute"}:
+            raise ValueError(f"Unsupported HazyResearch decode_strategy: {self.decode_strategy!r}")
         self.config_patch = dict(config.get("config_patch", {}) or {})
         self.constructor_kwargs = dict(config.get("constructor_kwargs", {}) or {})
         self.load_report = ModelLoadReport(
@@ -554,6 +559,7 @@ class HazyResearchLMRunner:
                 self.model = model_cls.from_pretrained_hf(model_source).to(device=self.device, dtype=dtype)
             self.model.eval()
             self.load_report.notes.append(f"Loaded HazyResearch {self.architecture!r} checkpoint.")
+            self.load_report.notes.append(f"Using HazyResearch decode_strategy={self.decode_strategy!r}.")
             self.load_report.num_parameters = sum(parameter.numel() for parameter in self.model.parameters())
             self.load_report.loaded = True
         except Exception as exc:
@@ -651,8 +657,13 @@ class HazyResearchLMRunner:
         input_len = int(input_ids.shape[1])
         start = time.time()
 
-        with torch.inference_mode():
-            output_ids = self.model.generate(input_ids, max_length=input_len + self.max_new_tokens)
+        if self.decode_strategy == "cached":
+            with torch.inference_mode():
+                output_ids = self.model.generate(input_ids, max_length=input_len + self.max_new_tokens)
+        elif self.decode_strategy == "recompute":
+            output_ids = self._generate_recompute(input_ids)
+        else:  # pragma: no cover - validated during initialization.
+            raise ValueError(f"Unsupported HazyResearch decode_strategy: {self.decode_strategy!r}")
 
         elapsed = time.time() - start
         generated_ids = output_ids[0, input_len:].detach().cpu()
@@ -674,6 +685,25 @@ class HazyResearchLMRunner:
             elapsed_sec=elapsed,
             peak_mem_gib=peak_mem_gib,
         )
+
+    def _generate_recompute(self, input_ids: Any) -> Any:
+        """Greedy decode by recomputing the full sequence at each new token.
+
+        The public BASED fallback generation path can produce unstable cached
+        recurrent decoding for some sequence lengths. Recompute decoding is
+        slower, but keeps accuracy runs on the same full-forward path used for
+        prompt prefill and avoids cache-specific artifacts.
+        """
+
+        torch = self.torch
+        assert torch is not None
+        output_ids = input_ids
+        for _ in range(self.max_new_tokens):
+            with torch.inference_mode():
+                logits = self.model(output_ids, num_last_tokens=1).logits[:, -1, :]
+                next_token = torch.argmax(logits, dim=-1, keepdim=True)
+            output_ids = torch.cat([output_ids, next_token], dim=1)
+        return output_ids
 
 
 def build_runner(config: dict[str, Any]) -> ModelRunner:

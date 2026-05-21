@@ -76,6 +76,12 @@ The final `huggingface_hub` reinstall resolves a transitive
 `accelerate`/`huggingface_hub` mismatch while preserving the Based model-loading
 path.
 
+The public BASED package can produce unstable cached recurrent generation in
+the fallback path when the optimized kernels are unavailable. BASED model
+configs therefore set `decode_strategy: recompute`, which greedily decodes by
+recomputing the full sequence for each new token. This is slower, but keeps
+accuracy runs on the full-forward path and avoids cache-specific artifacts.
+
 ## Core Commands
 
 Generate a tiny smoke dataset:

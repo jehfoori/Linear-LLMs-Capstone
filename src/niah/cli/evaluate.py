@@ -43,6 +43,7 @@ def main() -> None:
             "max_new_tokens": model_config.get("max_new_tokens", 8),
             "do_sample": model_config.get("do_sample", False),
             "use_cache": model_config.get("use_cache", True),
+            "decode_strategy": model_config.get("decode_strategy"),
         },
         "scoring": {"method": "first_number_exact_match"},
     }

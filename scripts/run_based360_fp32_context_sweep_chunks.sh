@@ -87,7 +87,12 @@ write_json(
             "num_selected_examples": len(prediction_rows),
             "num_total_examples": len(prediction_rows),
         },
-        "generation": {"max_new_tokens": load_config(model_config_path).get("max_new_tokens", 8), "do_sample": False, "use_cache": True},
+        "generation": {
+            "max_new_tokens": load_config(model_config_path).get("max_new_tokens", 8),
+            "do_sample": False,
+            "use_cache": load_config(model_config_path).get("use_cache", True),
+            "decode_strategy": load_config(model_config_path).get("decode_strategy"),
+        },
         "scoring": {"method": "first_number_exact_match"},
         "chunked_fresh_process_per_length": True,
     },

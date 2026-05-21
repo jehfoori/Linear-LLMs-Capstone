@@ -38,3 +38,17 @@ def test_build_runner_supports_hazyresearch_without_importing_dependencies():
 
     assert isinstance(runner, HazyResearchLMRunner)
     assert runner.label == "hazyresearch/based-360m"
+    assert runner.decode_strategy == "recompute"
+
+
+def test_hazyresearch_non_based_defaults_to_cached_decode():
+    runner = build_runner(
+        {
+            "runner": "hazyresearch_lm",
+            "model_id": "hazyresearch/mamba-360m",
+            "architecture": "mamba",
+        }
+    )
+
+    assert isinstance(runner, HazyResearchLMRunner)
+    assert runner.decode_strategy == "cached"
