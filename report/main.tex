@@ -1,0 +1,382 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1.1in]{geometry}
+\usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage{hyperref}
+
+\title{Long-Context Retrieval in Efficient Language Models}
+\author{Jeffrey Huang}
+\date{May 2026}
+
+\begin{document}
+
+\maketitle
+
+\section{Introduction}
+
+Large language models increasingly depend on long contexts: source files,
+research papers, transcripts, retrieved documents, and extended conversations
+are now commonly presented to a model as part of a single prompt. The dominant
+decoder-only Transformer architecture is well suited to such settings because
+self-attention gives each token a direct mechanism for accessing earlier tokens
+in the sequence \cite{vaswani2017attention}. This explicit access is one reason
+Transformers perform well on retrieval-like behavior: when a later token must
+recover a fact stated earlier in the prompt, attention can, in principle, route
+information directly from the relevant earlier position.
+
+The same mechanism is also the source of the long-context bottleneck. In
+standard self-attention, pairwise interactions are computed between positions in
+the sequence. During training this creates a quadratic dependence on context
+length, while autoregressive inference requires storing and reading a growing
+key-value cache. For short contexts this cost is manageable; for long contexts,
+the cache becomes increasingly memory- and bandwidth-intensive. As a result, a
+large body of recent work asks whether the useful behavior of attention can be
+approximated, compressed, or partially replaced by more efficient sequence
+mixing mechanisms.
+
+This paper surveys several representative approaches to that problem and then
+tests a narrower set of public checkpoints on synthetic long-context retrieval.
+The survey is organized around a central tradeoff. Full attention preserves
+explicit token-level access to the prompt, but it is expensive. Linear,
+recurrent, state-space, and convolutional alternatives reduce this cost by
+representing the past through structured or fixed-size state. That compression
+improves efficiency, especially during inference, but it may weaken precise
+retrieval when many similar facts compete for memory. Needle-in-a-haystack
+tasks provide a useful probe of this tradeoff because they isolate a simple
+question: can the model recover a specific key-value association from a long,
+mostly irrelevant context?
+
+\section{The Long-Context Bottleneck}
+
+In a Transformer layer, an input sequence representation
+\[
+X \in \mathbb{R}^{n \times d}
+\]
+is projected into query, key, and value matrices,
+\[
+Q=XW_Q,\qquad K=XW_K,\qquad V=XW_V.
+\]
+Causal self-attention computes
+\[
+\mathrm{Attn}(X)=
+\mathrm{softmax}\!\left(\frac{QK^\top+M}{\sqrt{d_k}}\right)V,
+\]
+where \(M\) is a causal mask. The matrix \(QK^\top\) contains all pairwise
+query-key scores, so its size grows as \(n^2\) with the sequence length. This
+quadratic structure is computationally expensive, but it also gives attention
+its distinctive modeling strength: each token can form a content-dependent
+connection to any earlier token.
+
+Autoregressive inference changes the computational form but not the basic
+length dependence. A decoder does not usually recompute the entire prefix at
+each generation step. Instead, it stores previous keys and values in a
+key-value cache. The current token contributes a new query, which attends over
+the cached prefix. This avoids redundant computation, but the cache still grows
+with context length and each new token must read from a longer memory. Long
+contexts therefore pressure both computation and memory movement.
+
+Efficient long-context architectures can be understood as different responses
+to this bottleneck. Some retain attention but restrict which positions can
+interact. Others replace attention with recurrent state, state-space dynamics,
+linearized attention, long convolutions, or hybrid combinations of these
+mechanisms. The central question for retrieval is not only whether these models
+are asymptotically cheaper, but what information is lost when the full prompt is
+compressed into a smaller or more structured memory.
+
+\section{Taxonomy of Efficient Long-Context Models}
+
+The efficient long-context literature is broad, so a chronological account can
+be misleading. Rather than treating recent models as a single linear
+progression, it is more useful to group them by how they represent past tokens.
+Table~\ref{tab:model-landscape} summarizes the representative model families
+considered in this report.
+
+\begin{table*}[t]
+\centering
+\scriptsize
+\setlength{\tabcolsep}{3.5pt}
+\renewcommand{\arraystretch}{1.18}
+\begin{tabularx}{\textwidth}{
+>{\raggedright\arraybackslash}p{2.5cm}
+>{\raggedright\arraybackslash}p{2.9cm}
+>{\raggedright\arraybackslash}X
+>{\raggedright\arraybackslash}X}
+\toprule
+\textbf{Model or family} &
+\textbf{Memory strategy} &
+\textbf{Efficiency idea} &
+\textbf{Retrieval-relevant risk} \\
+\midrule
+Transformer &
+Full causal attention &
+Preserves explicit token-to-token access, but uses quadratic sequence mixing
+and a growing KV cache. &
+Strong retrieval in principle, but expensive at long context lengths. \\
+\midrule
+BigBird &
+Sparse attention &
+Restricts attention to local, global, and random connections to reduce the cost
+of long-range attention \cite{zaheer2020bigbird}. &
+Retrieval may depend on whether the sparse pattern gives a strong path to the
+relevant token. \\
+\midrule
+RetNet &
+Retention / recurrent state &
+Uses a retention mechanism with parallel and recurrent forms, replacing a
+growing cache with a fixed recurrent state \cite{sun2023retnet}. &
+Decay-like memory may weaken old but relevant information. \\
+\midrule
+RWKV &
+RNN-style language modeling &
+Combines recurrent inference with Transformer-like training and scaling goals
+\cite{peng2023rwkv}. &
+Past context is summarized into recurrent state rather than explicitly stored. \\
+\midrule
+Hyena &
+Implicit long convolution &
+Uses long implicit filters and gating as an alternative to attention-based
+sequence mixing \cite{poli2023hyena}. &
+Long-range information is mixed through filters rather than retrieved by direct
+indexing. \\
+\midrule
+Mamba &
+Selective state-space model &
+Makes state-space updates input-dependent and implements them with a
+hardware-aware selective scan \cite{gu2023mamba}. &
+Selective memory can retain salient inputs, but capacity is still finite. \\
+\midrule
+Mamba-2 &
+State-space duality &
+Recasts selective state-space computation into dual recurrent and structured
+matrix forms for better hardware efficiency \cite{dao2024mamba2}. &
+Improves the capacity-efficiency tradeoff, but still compresses history. \\
+\midrule
+Gated DeltaNet &
+Gated delta-rule memory &
+Adds a more explicit overwrite-style update to reduce interference among stored
+associations \cite{yang2024gateddelta}. &
+Retrieval depends on whether the learned overwrite rule preserves the needed
+association under distractors. \\
+\midrule
+BASED &
+Hybrid linear attention &
+Combines global linear attention, local sliding attention, and convolutional
+mixing \cite{arora2024based}. &
+Compressed global memory may confuse similar key-value records. \\
+\midrule
+Griffin, Jamba, Nemotron-H &
+Modern hybrids &
+Mix recurrent, state-space, or linear components with attention layers
+\cite{de2024griffin,lieber2024jamba,nvidia2025nemotron}. &
+Hybrid design may recover some explicit access, but behavior depends on where
+attention is retained. \\
+\bottomrule
+\end{tabularx}
+\caption{Representative strategies for efficient long-context language
+modeling. The table emphasizes how each family represents prior context and
+what kind of retrieval failure that representation may induce.}
+\label{tab:model-landscape}
+\end{table*}
+
+Sparse attention models such as BigBird preserve attention as the basic
+operation, but reduce cost by limiting the attention pattern
+\cite{zaheer2020bigbird}. This keeps some explicit token access while avoiding
+the full quadratic matrix. Recurrent and state-space models instead replace
+explicit history with a state updated across time. RetNet uses a retention
+mechanism with recurrent and parallel forms \cite{sun2023retnet}, RWKV pursues
+RNN-style language modeling at large scale \cite{peng2023rwkv}, and Mamba
+introduces input-dependent selective state updates \cite{gu2023mamba}. Mamba-2
+then reformulates selective state-space computation through state-space duality,
+improving the practical hardware profile of this family
+\cite{dao2024mamba2}.
+
+Other approaches replace attention with different structured sequence-mixing
+operations. Hyena uses implicit long convolutions and gating to model long
+sequences without attention \cite{poli2023hyena}. Linear attention methods
+rewrite attention-like computation so that key-value information can be
+accumulated into compressed statistics; this perspective is closely related to
+the view of linear Transformers as fast-weight programmers
+\cite{schlag2021fastweight}. BASED builds on this direction with a hybrid
+architecture combining global linear attention, local attention, and
+convolution \cite{arora2024based}. More recent systems such as Griffin, Jamba,
+and Nemotron-H suggest that the field is moving toward hybrid architectures
+rather than pure replacements: attention remains useful, but it is mixed with
+recurrent or state-space components to reduce cost
+\cite{de2024griffin,lieber2024jamba,nvidia2025nemotron}.
+
+\section{Mechanistic Themes}
+
+Several recurring ideas cut across these model families. The first is the
+distinction between explicit access and compressed state. Full attention retains
+a separate key and value for every prior token. In contrast, linear attention,
+state-space models, and recurrent models summarize the prefix into a fixed-size
+or structured state. This shift is the main source of their efficiency, but it
+also creates the possibility of interference. If many similar facts are written
+into the same compressed memory, a later query may recover the wrong
+association or a value that was never present in the prompt.
+
+The second theme is forgetting. Retention and recurrent models often use
+decay-like behavior to keep memory bounded and suppress stale information. Such
+decay is useful when most old tokens are irrelevant, but retrieval tasks expose
+the opposite case: an early token may remain essential even after many
+irrelevant updates. Long-context retrieval therefore tests whether a model can
+preserve a small piece of information without allowing it to fade or be
+overwritten.
+
+The third theme is selectivity. Mamba's central contribution is to make the
+state update depend on the input token, allowing the model to decide which
+information should be retained or suppressed \cite{gu2023mamba}. Mamba-2 keeps
+this selective-memory perspective but reorganizes the computation into a form
+that is more compatible with efficient matrix operations \cite{dao2024mamba2}.
+Selectivity is important for retrieval because it gives the model a possible
+mechanism for filtering irrelevant context. However, selectivity does not
+remove the finite-state bottleneck: the model must still decide what to store
+and what to sacrifice.
+
+The fourth theme is overwrite and interference. Gated DeltaNet explicitly
+targets the problem that additive memory updates can be too blunt when many
+similar associations are present \cite{yang2024gateddelta}. Its gated
+delta-rule update is designed to edit memory more precisely along the current
+key direction. In the retrieval setting, this idea is directly relevant:
+distractor records create many nearly identical write operations, and the model
+must preserve the association requested by the final query without confusing it
+with the others.
+
+Finally, hybrid architectures reflect a practical compromise. BASED, Griffin,
+Jamba, and Nemotron-H all combine mechanisms rather than relying on a single
+sequence mixer. Local or sparse attention can preserve some exact token access,
+while linear, recurrent, or state-space components provide cheaper global
+context processing. This trend suggests that the long-context problem is not
+simply a choice between attention and recurrence, but a question of how much
+explicit access must be retained for a given task.
+
+\section{Scope of the Empirical Study}
+
+The survey above covers a wider landscape than can be fairly tested in a small
+reproduction study. A meaningful empirical comparison requires public
+checkpoints that are comparable in scale, training conditions, and
+implementation quality. The original plan for this project centered on Mamba-2
+and Gated DeltaNet, but that path raised substantial reproducibility concerns.
+The exact Gated DeltaNet paper checkpoints were not publicly available in a
+form that supported a clean comparison, and public alternatives differed in
+source, configuration, and training assumptions. Dependency and kernel issues
+also made it difficult to separate architecture from implementation artifacts.
+
+For this reason, the experimental portion of the report narrows to a
+HazyResearch checkpoint family released with the BASED paper. This family
+includes an attention baseline, a Mamba baseline, and BASED models at two
+scales. It therefore supports a more controlled comparison among full
+attention, selective state-space modeling, and a hybrid linear-attention model.
+The experiments should not be read as a reproduction of the BASED paper's
+throughput claims. The optimized kernels required for faithful speed comparison
+were not available in our setup, and BASED accuracy runs were performed with a
+more conservative decoding path to avoid artifacts in the public fallback
+implementation. Instead, the study is best understood as a controlled
+long-context retrieval extension using public checkpoints.
+
+\section{Experimental Expectations}
+
+The survey suggests several expectations for synthetic retrieval. First,
+single-needle retrieval should be relatively easy. When there is only one
+record in the document, the model does not need to choose among competing
+associations. Second, multi-key retrieval with distractors should be much more
+diagnostic. In that setting, the model must bind the queried key to the correct
+value among many same-format alternatives. This directly stresses interference
+and overwrite behavior.
+
+Full attention should have an advantage when exact key-value binding is
+required, because it retains explicit access to prior tokens. Compressed-memory
+models may still succeed if their state preserves the relevant association, but
+they have a clearer failure mode: many similar records can collide in the
+compressed state. For that reason, the most informative outcome is not only
+accuracy but the type of error. A distractor value suggests that the model found
+the record format but selected the wrong association. A number not present in
+the document suggests a more general recall or generation failure. A response
+with no number at all suggests that the model has left the intended answer mode
+and reverted to ordinary continuation.
+
+These are expectations rather than strict predictions. Architecture is only one
+factor in empirical behavior. Checkpoint training, scale, prompt format,
+tokenizer behavior, and implementation path all affect the final result. The
+experiments that follow should therefore be interpreted as controlled probes of
+retrieval behavior in available public models, not as definitive rankings of
+all efficient long-context architectures.
+
+\begin{thebibliography}{99}
+
+\bibitem{vaswani2017attention}
+A. Vaswani et al.
+\newblock Attention is all you need.
+\newblock In \emph{NeurIPS}, 2017.
+
+\bibitem{zaheer2020bigbird}
+M. Zaheer et al.
+\newblock Big Bird: Transformers for longer sequences.
+\newblock In \emph{NeurIPS}, 2020.
+
+\bibitem{sun2023retnet}
+Y. Sun et al.
+\newblock Retentive network: A successor to Transformer for large language
+models.
+\newblock arXiv preprint, 2023.
+
+\bibitem{peng2023rwkv}
+B. Peng et al.
+\newblock RWKV: Reinventing RNNs for the Transformer era.
+\newblock arXiv preprint, 2023.
+
+\bibitem{poli2023hyena}
+M. Poli et al.
+\newblock Hyena hierarchy: Towards larger convolutional language models.
+\newblock In \emph{ICML}, 2023.
+
+\bibitem{gu2023mamba}
+A. Gu and T. Dao.
+\newblock Mamba: Linear-time sequence modeling with selective state spaces.
+\newblock arXiv preprint, 2023.
+
+\bibitem{dao2024mamba2}
+T. Dao and A. Gu.
+\newblock Transformers are SSMs: Generalized models and efficient algorithms
+through structured state space duality.
+\newblock In \emph{ICML}, 2024.
+
+\bibitem{yang2024gateddelta}
+S. Yang et al.
+\newblock Gated Delta Networks: Improving Mamba2 with delta rule.
+\newblock arXiv preprint, 2024.
+
+\bibitem{schlag2021fastweight}
+I. Schlag, K. Irie, and J. Schmidhuber.
+\newblock Linear Transformers are secretly fast weight programmers.
+\newblock In \emph{ICML}, 2021.
+
+\bibitem{arora2024based}
+S. Arora et al.
+\newblock Simple linear attention language models balance the recall-throughput
+tradeoff.
+\newblock arXiv preprint, 2024.
+
+\bibitem{de2024griffin}
+S. De et al.
+\newblock Griffin: Mixing gated linear recurrences with local attention for
+efficient language models.
+\newblock arXiv preprint, 2024.
+
+\bibitem{lieber2024jamba}
+O. Lieber et al.
+\newblock Jamba: A hybrid Transformer-Mamba language model.
+\newblock arXiv preprint, 2024.
+
+\bibitem{nvidia2025nemotron}
+NVIDIA et al.
+\newblock Nemotron-H: A family of accurate and efficient hybrid
+Mamba-Transformer models.
+\newblock arXiv preprint, 2025.
+
+\end{thebibliography}
+
+\end{document}
