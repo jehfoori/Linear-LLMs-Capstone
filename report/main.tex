@@ -1,23 +1,36 @@
-\documentclass[11pt]{article}
+\documentclass[10pt]{article}
 
-\usepackage[margin=1.1in]{geometry}
+\usepackage[left=1.1in,right=1.1in,top=1.0in,bottom=1.0in]{geometry}
 \usepackage{amsmath}
+\usepackage{amssymb}
 \usepackage{booktabs}
 \usepackage{tabularx}
 \usepackage{array}
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{placeins}
+\usepackage{microtype}
+\usepackage[font=small,labelfont=bf]{caption}
 \usepackage{hyperref}
-
-\title{Long-Context Retrieval in Efficient Language Models}
-\author{Jeffrey Huang}
-\date{May 2026}
+\hypersetup{hidelinks}
+\setlength{\emergencystretch}{2em}
+\hbadness=2000
 
 \begin{document}
 
-\maketitle
+\begin{center}
+{\Large A Survey and Controlled Synthetic Retrieval Study of Efficient Language Models\par}
+\vspace{0.35em}
+{\normalsize Jeffrey Huang\par}
+\vspace{0.05em}
+{\small University of California, Los Angeles\par}
+\vspace{0.05em}
+{\small May 2026\par}
+\end{center}
+\vspace{0.7em}
 
 \section{Introduction}
-
-Large language models increasingly depend on long contexts: source files,
+Long-context expectations for large language models have grown significantly: source files,
 research papers, transcripts, retrieved documents, and extended conversations
 are now commonly presented to a model as part of a single prompt. The dominant
 decoder-only Transformer architecture is well suited to such settings because
@@ -29,25 +42,28 @@ information directly from the relevant earlier position.
 
 The same mechanism is also the source of the long-context bottleneck. In
 standard self-attention, pairwise interactions are computed between positions in
-the sequence. During training this creates a quadratic dependence on context
+the sequence. During training, this creates a quadratic dependence on context
 length, while autoregressive inference requires storing and reading a growing
-key-value cache. For short contexts this cost is manageable; for long contexts,
+key-value cache. This cost is manageable for short contexts, but as prompt length grows,
 the cache becomes increasingly memory- and bandwidth-intensive. As a result, a
-large body of recent work asks whether the useful behavior of attention can be
+sizable body of recent work explores whether the useful behavior of attention can be
 approximated, compressed, or partially replaced by more efficient sequence
 mixing mechanisms.
 
 This paper surveys several representative approaches to that problem and then
-tests a narrower set of public checkpoints on synthetic long-context retrieval.
-The survey is organized around a central tradeoff. Full attention preserves
-explicit token-level access to the prompt, but it is expensive. Linear,
-recurrent, state-space, and convolutional alternatives reduce this cost by
-representing the past through structured or fixed-size state. That compression
-improves efficiency, especially during inference, but it may weaken precise
-retrieval when many similar facts compete for memory. Needle-in-a-haystack
-tasks provide a useful probe of this tradeoff because they isolate a simple
-question: can the model recover a specific key-value association from a long,
-mostly irrelevant context?
+tests selected public checkpoints on controlled synthetic key-value retrieval. The survey is
+organized around a central tradeoff. Although full attention preserves explicit
+token-level access to the prompt, it is expensive. Linear, recurrent,
+state-space, and convolutional alternatives reduce this cost by representing
+the past through a structured or fixed-size state. That compression improves
+efficiency, especially during inference, but it may weaken precise retrieval
+when many similar facts compete within a finite memory space. Needle-in-a-haystack tasks provide
+a useful probe of this tradeoff because they isolate a simple question: can the
+model recover a specific key-value association from a long, mostly irrelevant
+context? The empirical study uses this controlled slice of long-context
+retrieval to study two public checkpoint families: a HazyResearch/BASED family
+comparison involving attention, Mamba, and BASED models, and a larger State
+Spaces comparison of Mamba, Mamba-2, and Mamba-2-Attn.
 
 \section{The Long-Context Bottleneck}
 
@@ -59,251 +75,873 @@ is projected into query, key, and value matrices,
 \[
 Q=XW_Q,\qquad K=XW_K,\qquad V=XW_V.
 \]
+Here, \(n\) is the number of tokens in the sequence and \(d\) is the hidden
+dimension of each token representation. The matrices \(Q\), \(K\), and \(V\)
+contain, respectively, the query, key, and value vectors for each token position:
+\textit{queries} determine what each position is looking for, \textit{keys} determine what each
+position offers as an address, and \textit{values} contain the information that will be
+mixed into the position's output.
+
 Causal self-attention computes
 \[
 \mathrm{Attn}(X)=
-\mathrm{softmax}\!\left(\frac{QK^\top+M}{\sqrt{d_k}}\right)V,
+\mathrm{softmax}\!\left(\frac{QK^\top}{\sqrt{d_k}} + M\right)V,
 \]
-where \(M\) is a causal mask. The matrix \(QK^\top\) contains all pairwise
-query-key scores, so its size grows as \(n^2\) with the sequence length. This
-quadratic structure is computationally expensive, but it also gives attention
-its distinctive modeling strength: each token can form a content-dependent
-connection to any earlier token.
+where \(d_k\) is the key dimension and \(M\) is a causal mask that prevents a
+position from attending to future tokens. The matrix \(QK^\top\) contains all
+pairwise query-key scores: entry \((t,i)\) measures how strongly token \(t\)
+should attend to token \(i\). Because this score matrix contains one entry for
+each ordered pair of positions, its size grows as \(n^2\) with the sequence
+length. This quadratic structure is computationally expensive, but it also
+gives attention its distinctive modeling strength: each token can form a
+content-dependent connection to any earlier token.
 
 Autoregressive inference changes the computational form but not the basic
-length dependence. A decoder does not usually recompute the entire prefix at
-each generation step. Instead, it stores previous keys and values in a
-key-value cache. The current token contributes a new query, which attends over
-the cached prefix. This avoids redundant computation, but the cache still grows
-with context length and each new token must read from a longer memory. Long
-contexts therefore pressure both computation and memory movement.
+length dependence. During generation, the \textit{prefix} is the sequence already
+available to the model: the original prompt plus any tokens generated so far.
+A decoder does not usually recompute keys and values for this entire prefix at
+each generation step. Instead, it stores them in a key-value cache. When the
+next token is generated, the model forms a new \textit{query} for the current position
+and compares it against the cached \textit{keys} for all earlier positions, then mixes
+the corresponding cached \textit{values}. This avoids redundant recomputation over old
+tokens, but the cache still grows with context length and each new token must
+read from a longer memory. Long contexts therefore pressure both computation
+and memory movement.
 
-Efficient long-context architectures can be understood as different responses
+Efficient long-context architectures can be interpreted as different responses
 to this bottleneck. Some retain attention but restrict which positions can
 interact. Others replace attention with recurrent state, state-space dynamics,
 linearized attention, long convolutions, or hybrid combinations of these
 mechanisms. The central question for retrieval is not only whether these models
-are asymptotically cheaper, but what information is lost when the full prompt is
-compressed into a smaller or more structured memory.
+are asymptotically cheaper, but also how much information is retained when the full
+prompt is compressed into a smaller or more structured memory.
+
+The following schematics describe how one sequence-mixing layer carries context
+through a single input sequence. Let \(x_t\) denote the hidden representation
+entering the layer at position \(t\), and let \(y_t\) denote the representation
+produced after context has been mixed into that position. In a decoder language
+model, these representations are passed through later layers and projected to
+vocabulary logits for next-token prediction.
+
+Full attention preserves the past as a token-indexed memory:
+\[
+y_t=\sum_{i\leq t}\alpha_{t,i}v_i,\qquad
+\alpha_{t,i}\propto \exp(q_t^\top k_i),
+\]
+where \(q_t\) is the query at the current position, \(k_i\) and \(v_i\) are the
+key and value vectors stored for an earlier position, \(\alpha_{t,i}\) is the
+attention weight assigned to that position, and \(y_t\) is the resulting output
+representation. As shown, for a single current position
+\(t\), attention computes a weighted sum over previous value vectors. To achieve this, each
+earlier token remains separately addressable through its own key and value, meaning
+the model must store and read memory whose size grows with the prefix.
+
+Compressed-memory models replace this growing token-indexed memory with a
+fixed-size state that is updated as the sequence is read,
+\[
+s_t = F_\theta(s_{t-1},x_t),\qquad y_t = G_\theta(s_t,x_t).
+\]
+In this schematic form, \(s_t\) is the memory state after reading token \(x_t\),
+and \(F_\theta\) and \(G_\theta\) are learned update and readout functions. The
+sequence is processed from left to right: \(x_t\) updates the running state, and
+\(y_t\) is read from that updated state together with the current input.
+Information from the prefix is folded into \(s_t\), creating efficient decoding
+while making interference between stored facts possible.
+
+Linear-attention and fast-weight views use a related form of compression: they
+store associations between keys and values in an accumulated key-value
+statistic, such as
+\[
+S_t = S_{t-1}+\phi(k_t)v_t^\top,\qquad
+y_t \propto \phi(q_t)^\top S_t,
+\]
+where \(\phi(\cdot)\) is a feature map applied to keys and queries. The feature
+map makes key-query comparisons compatible with an accumulated summary:
+\(S_t\) stores many key-value associations, and the transformed query
+\(\phi(q_t)\) reads from that shared statistic. This keeps the memory compact,
+but many associations must share the same finite representation.
+
+Selective or gated recurrent models make the update itself depend on the
+current token, as in
+\[
+s_t=(1-z_t)\odot s_{t-1}+z_t\odot \tilde{s}_t,
+\]
+where \(z_t\) is an input-dependent gate, \(\tilde{s}_t\) is a candidate
+state update, and \(\odot\) denotes element-wise multiplication. Gate values
+near zero preserve the previous state, while values near one write the
+candidate update; in typical neural implementations, this decision can vary
+across dimensions of the state. These forms provide the vocabulary used below:
+indexed lookup, compressed state, accumulated associations, and gated writing.
+Real architectures often combine these patterns, but the distinctions help
+organize how different models carry prior context forward.
 
 \section{Taxonomy of Efficient Long-Context Models}
 
-The efficient long-context literature is broad, so a chronological account can
-be misleading. Rather than treating recent models as a single linear
-progression, it is more useful to group them by how they represent past tokens.
-Table~\ref{tab:model-landscape} summarizes the representative model families
-considered in this report.
+Efficient long-context models can be grouped by how they represent prior
+context and by how they reduce the cost of full attention. Table
+\ref{tab:model-landscape} organizes representative model families along those
+two axes. The term ``efficient'' is used broadly here: some models are strictly
+recurrent or linear-time in their sequence-mixing layer, while others reduce
+the cost of full attention through sparsity, locality, convolution, or
+hybridization. Practical efficiency also depends on constants, kernels, model
+width, batching, and hardware, so the table emphasizes the strategy each model
+uses to reduce the attention bottleneck.
 
-\begin{table*}[t]
+\begin{table}[H]
 \centering
 \scriptsize
-\setlength{\tabcolsep}{3.5pt}
-\renewcommand{\arraystretch}{1.18}
+\setlength{\tabcolsep}{1.7pt}
+\renewcommand{\arraystretch}{1.04}
 \begin{tabularx}{\textwidth}{
->{\raggedright\arraybackslash}p{2.5cm}
->{\raggedright\arraybackslash}p{2.9cm}
+>{\raggedright\arraybackslash}p{2.35cm}
+>{\raggedright\arraybackslash}p{2.65cm}
 >{\raggedright\arraybackslash}X
+>{\raggedright\arraybackslash}p{3.0cm}
 >{\raggedright\arraybackslash}X}
 \toprule
-\textbf{Model or family} &
-\textbf{Memory strategy} &
-\textbf{Efficiency idea} &
-\textbf{Retrieval-relevant risk} \\
+\textbf{Category} &
+\textbf{Representative models} &
+\textbf{Context representation} &
+\textbf{Efficiency strategy} &
+\textbf{Retrieval tradeoff} \\
 \midrule
+Full explicit access &
 Transformer &
-Full causal attention &
-Preserves explicit token-to-token access, but uses quadratic sequence mixing
-and a growing KV cache. &
-Strong retrieval in principle, but expensive at long context lengths. \\
+Stores token-indexed keys and values for the full prefix. &
+Pays full attention cost: \(O(n^2)\) prefill/training and an \(O(n)\) KV-cache
+read per generated token. &
+Strongest direct retrieval mechanism, but memory and bandwidth costs grow with
+context length. \\
 \midrule
-BigBird &
-Sparse attention &
-Restricts attention to local, global, and random connections to reduce the cost
-of long-range attention \cite{zaheer2020bigbird}. &
-Retrieval may depend on whether the sparse pattern gives a strong path to the
-relevant token. \\
+Restricted explicit access &
+BigBird; local or sliding attention &
+Keeps attention, but limits which token pairs can interact. &
+Reduces the attention graph through sparse, local, global, or random patterns
+\cite{zaheer2020bigbird}. &
+Retains some direct access, but retrieval depends on whether the pattern gives
+a usable path to the relevant token. \\
 \midrule
-RetNet &
-Retention / recurrent state &
-Uses a retention mechanism with parallel and recurrent forms, replacing a
-growing cache with a fixed recurrent state \cite{sun2023retnet}. &
-Decay-like memory may weaken old but relevant information. \\
+Compressed recurrent / state-space memory &
+RetNet, RWKV, Mamba, Mamba-2 &
+Summarizes the prefix into recurrent, retention, or state-space state
+\cite{sun2023retnet,peng2023rwkv,gu2023mamba,dao2024mamba2}. &
+Uses linear scans, parallel recurrent forms, or constant-state decoding instead
+of a growing KV cache. &
+Efficient long-context processing, but finite state can forget, overwrite, or
+merge similar facts. \\
 \midrule
-RWKV &
-RNN-style language modeling &
-Combines recurrent inference with Transformer-like training and scaling goals
-\cite{peng2023rwkv}. &
-Past context is summarized into recurrent state rather than explicitly stored. \\
+Associative / fast-weight memory &
+Linear Transformers, Gated DeltaNet &
+Shared matrix-like key-value statistics
+\cite{yang2024gateddelta,schlag2021fastweight}. &
+Linearizes attention-like computation or updates fast weights recurrently. &
+Stores key-value associations efficiently, but finite shared memory can suffer
+collisions or overwrite when many similar bindings are inserted. \\
 \midrule
+Structured convolutional mixing &
 Hyena &
-Implicit long convolution &
-Uses long implicit filters and gating as an alternative to attention-based
-sequence mixing \cite{poli2023hyena}. &
-Long-range information is mixed through filters rather than retrieved by direct
-indexing. \\
+Mixes long-range information through implicit filters and gating
+\cite{poli2023hyena}. &
+Uses long convolutional structure, often near-linear or \(O(n\log n)\), rather
+than all-pairs attention. &
+Can propagate long-range signals through learned filters, but retrieval is
+mediated by structured mixing rather than direct token-indexed lookup. \\
 \midrule
-Mamba &
-Selective state-space model &
-Makes state-space updates input-dependent and implements them with a
-hardware-aware selective scan \cite{gu2023mamba}. &
-Selective memory can retain salient inputs, but capacity is still finite. \\
-\midrule
-Mamba-2 &
-State-space duality &
-Recasts selective state-space computation into dual recurrent and structured
-matrix forms for better hardware efficiency \cite{dao2024mamba2}. &
-Improves the capacity-efficiency tradeoff, but still compresses history. \\
-\midrule
-Gated DeltaNet &
-Gated delta-rule memory &
-Adds a more explicit overwrite-style update to reduce interference among stored
-associations \cite{yang2024gateddelta}. &
-Retrieval depends on whether the learned overwrite rule preserves the needed
-association under distractors. \\
-\midrule
-BASED &
-Hybrid linear attention &
-Combines global linear attention, local sliding attention, and convolutional
-mixing \cite{arora2024based}. &
-Compressed global memory may confuse similar key-value records. \\
-\midrule
-Griffin, Jamba, Nemotron-H &
-Modern hybrids &
-Mix recurrent, state-space, or linear components with attention layers
-\cite{de2024griffin,lieber2024jamba,nvidia2025nemotron}. &
-Hybrid design may recover some explicit access, but behavior depends on where
-attention is retained. \\
+Hybrid efficient architectures &
+BASED, Mamba-2-Attn, Griffin, Jamba, Nemotron-H &
+Combines partial attention with linear, recurrent, state-space, convolutional,
+or local sequence mixing
+\cite{arora2024based,dao2024mamba2,de2024griffin,lieber2024jamba,nvidia2025nemotron}. &
+Pays for explicit access only in selected layers, windows, or components while
+using cheaper mixers elsewhere. &
+May protect key-value binding where attention is retained, but behavior depends
+on the placement, frequency, and scope of those attention components. \\
 \bottomrule
 \end{tabularx}
 \caption{Representative strategies for efficient long-context language
-modeling. The table emphasizes how each family represents prior context and
-what kind of retrieval failure that representation may induce.}
+modeling. The categories are organized by how prior context is represented,
+how the architecture tries to reduce the cost of full attention, and what
+retrieval weakness that strategy can introduce.}
 \label{tab:model-landscape}
-\end{table*}
+\end{table}
 
-Sparse attention models such as BigBird preserve attention as the basic
-operation, but reduce cost by limiting the attention pattern
-\cite{zaheer2020bigbird}. This keeps some explicit token access while avoiding
-the full quadratic matrix. Recurrent and state-space models instead replace
-explicit history with a state updated across time. RetNet uses a retention
-mechanism with recurrent and parallel forms \cite{sun2023retnet}, RWKV pursues
-RNN-style language modeling at large scale \cite{peng2023rwkv}, and Mamba
-introduces input-dependent selective state updates \cite{gu2023mamba}. Mamba-2
-then reformulates selective state-space computation through state-space duality,
-improving the practical hardware profile of this family
-\cite{dao2024mamba2}.
+These categories form a continuum of memory behavior. Several models combine
+mechanisms or admit multiple equivalent interpretations, but the grouping
+highlights the dominant way each family represents prior context. At one end,
+full attention preserves explicit token-level access at high cost.
+Restricted-attention models such as BigBird keep the attention operation but
+reduce the set of token pairs that interact, often using local windows, global
+tokens, or sparse random connections to lower the cost of the attention graph
+\cite{zaheer2020bigbird}.
 
-Other approaches replace attention with different structured sequence-mixing
-operations. Hyena uses implicit long convolutions and gating to model long
-sequences without attention \cite{poli2023hyena}. Linear attention methods
-rewrite attention-like computation so that key-value information can be
-accumulated into compressed statistics; this perspective is closely related to
-the view of linear Transformers as fast-weight programmers
-\cite{schlag2021fastweight}. BASED builds on this direction with a hybrid
-architecture combining global linear attention, local attention, and
-convolution \cite{arora2024based}. More recent systems such as Griffin, Jamba,
-and Nemotron-H suggest that the field is moving toward hybrid architectures
-rather than pure replacements: attention remains useful, but it is mixed with
-recurrent or state-space components to reduce cost
-\cite{de2024griffin,lieber2024jamba,nvidia2025nemotron}.
+Recurrent and state-space models move further toward compression. RetNet uses
+a retention mechanism with both parallel and recurrent forms, allowing the
+model to resemble attention for parallelizable training while supporting recurrent-style
+inference \cite{sun2023retnet}. RWKV also pursues Transformer-like language
+modeling through recurrent updates: instead of storing a key-value cache for
+all prior tokens, it carries a compact state forward through the sequence
+\cite{peng2023rwkv}. Mamba introduces \textit{input-dependent} selective state updates,
+so the model can vary what it writes into memory based on the current token
+\cite{gu2023mamba}. Mamba-2 keeps the state-space perspective but reorganizes
+the computation through \textit{state-space duality}, improving the architecture's
+parallel and hardware-friendly forms \cite{dao2024mamba2}.
 
+Other categories compress or structure context in different ways. Hyena uses
+implicit long convolutions and gating, learning long filters that mix
+information across distant positions without full pairwise attention
+\cite{poli2023hyena}. Linear attention methods rewrite attention-like
+computation so that key-value information can be accumulated into compressed
+statistics, a view closely related to fast-weight programming
+\cite{schlag2021fastweight}. Gated DeltaNet extends this associative-memory
+direction with a gated delta-rule update intended to reduce overwrite and
+interference among similar associations \cite{yang2024gateddelta}. Hybrid
+systems such as BASED, Mamba-2-Attn, Griffin, Jamba, and Nemotron-H occupy the
+middle of the design space: they retain some attention or local explicit
+access while relying on cheaper linear, recurrent, state-space, or
+convolutional components elsewhere
+\cite{arora2024based,dao2024mamba2,de2024griffin,lieber2024jamba,nvidia2025nemotron}.
+
+This taxonomy sets the context for the empirical study, which samples two
+public checkpoint families from the broader design space. Experiment 1 compares
+full attention, compressed state-space memory, and hybrid linear attention
+within the HazyResearch/BASED family. Experiment 2 then zooms in on the State
+Spaces family, comparing original Mamba, Mamba-2, and a Mamba-2 hybrid with
+attention blocks.
+
+\FloatBarrier
 \section{Mechanistic Themes}
+ 
+The taxonomy describes how efficient models represent context. The same
+distinctions also suggest retrieval failure modes. Several recurring themes
+connect the model families above to synthetic key-value tasks. The first
+is the distinction between explicit access and compressed state. Full attention
+retains a separate key and value for every prior token. In contrast, linear
+attention, state-space models, and recurrent models summarize the prefix into a
+fixed-size or structured state. This shift is the main source of their
+efficiency, but it also creates the possibility of interference. If many
+similar facts are written into the same compressed memory, a later query may
+recover the wrong association or a value that was never present in the prompt.
 
-Several recurring ideas cut across these model families. The first is the
-distinction between explicit access and compressed state. Full attention retains
-a separate key and value for every prior token. In contrast, linear attention,
-state-space models, and recurrent models summarize the prefix into a fixed-size
-or structured state. This shift is the main source of their efficiency, but it
-also creates the possibility of interference. If many similar facts are written
-into the same compressed memory, a later query may recover the wrong
-association or a value that was never present in the prompt.
-
-The second theme is forgetting. Retention and recurrent models often use
-decay-like behavior to keep memory bounded and suppress stale information. Such
-decay is useful when most old tokens are irrelevant, but retrieval tasks expose
-the opposite case: an early token may remain essential even after many
+The second theme is \textit{forgetting}. Retention and recurrent models often use
+decay-like behavior to keep memory bounded and suppress stale information. Such decay is useful when most old tokens are irrelevant, but retrieval tasks expose the opposite case: an early token may remain essential even after many
 irrelevant updates. Long-context retrieval therefore tests whether a model can
 preserve a small piece of information without allowing it to fade or be
 overwritten.
 
-The third theme is selectivity. Mamba's central contribution is to make the
-state update depend on the input token, allowing the model to decide which
-information should be retained or suppressed \cite{gu2023mamba}. Mamba-2 keeps
-this selective-memory perspective but reorganizes the computation into a form
-that is more compatible with efficient matrix operations \cite{dao2024mamba2}.
+The third theme is \textit{selectivity}. Mamba's central contribution is to make the
+compressed state's update form depend on the input token, allowing the model to decide which information should be retained or suppressed \cite{gu2023mamba}.
 Selectivity is important for retrieval because it gives the model a possible
 mechanism for filtering irrelevant context. However, selectivity does not
 remove the finite-state bottleneck: the model must still decide what to store
 and what to sacrifice.
 
-The fourth theme is overwrite and interference. Gated DeltaNet explicitly
-targets the problem that additive memory updates can be too blunt when many
-similar associations are present \cite{yang2024gateddelta}. Its gated
-delta-rule update is designed to edit memory more precisely along the current
-key direction. In the retrieval setting, this idea is directly relevant:
-distractor records create many nearly identical write operations, and the model
-must preserve the association requested by the final query without confusing it
-with the others.
+The fourth theme is \textit{overwrite} and \textit{interference}. For example, Gated DeltaNet explicitly targets the problem that additive updates in its accumulated association memory can be too blunt when many similar associations are present \cite{yang2024gateddelta}. Its gated delta-rule update is designed to edit memory more precisely along the current key direction. In the retrieval setting, this idea is directly relevant: distractor records create many nearly identical write operations, and the model must preserve the association requested by the final query without confusing it with the others.
 
-Finally, hybrid architectures reflect a practical compromise. BASED, Griffin,
-Jamba, and Nemotron-H all combine mechanisms rather than relying on a single
-sequence mixer. Local or sparse attention can preserve some exact token access,
-while linear, recurrent, or state-space components provide cheaper global
-context processing. This trend suggests that the long-context problem is not
-simply a choice between attention and recurrence, but a question of how much
-explicit access must be retained for a given task.
+Finally, hybrid architectures reflect a practical compromise. BASED,
+Mamba-2-Attn, Griffin, Jamba, and Nemotron-H combine multiple sequence-mixing mechanisms in one architecture. Local or sparse attention can preserve some exact token access, while linear, recurrent, or state-space components provide cheaper global context processing. In retrieval terms, hybrid models ask
+whether a small number of explicit-access layers can protect key-value binding
+while most layers use cheaper compressed or local sequence mixing. This trend
+frames the long-context problem as a question of how much explicit access must
+be retained for a given task.
 
-\section{Scope of the Empirical Study}
+\section{Empirical Study Overview}
 
-The survey above covers a wider landscape than can be fairly tested in a small
-reproduction study. A meaningful empirical comparison requires public
-checkpoints that are comparable in scale, training conditions, and
-implementation quality. The original plan for this project centered on Mamba-2
-and Gated DeltaNet, but that path raised substantial reproducibility concerns.
-The exact Gated DeltaNet paper checkpoints were not publicly available in a
-form that supported a clean comparison, and public alternatives differed in
-source, configuration, and training assumptions. Dependency and kernel issues
-also made it difficult to separate architecture from implementation artifacts.
+The survey above covers a wider landscape than can be reliably tested in a small
+reproduction study. A meaningful empirical comparison requires more than
+architectural variety: the tested checkpoints should be public, loadable under
+a common evaluation pipeline, and reasonably comparable in scale, tokenizer,
+training conditions, and implementation quality. Otherwise, differences in
+pretraining data, prompt format, numerical kernels, or checkpoint provenance
+can be mistaken for architectural effects.
 
-For this reason, the experimental portion of the report narrows to a
-HazyResearch checkpoint family released with the BASED paper. This family
-includes an attention baseline, a Mamba baseline, and BASED models at two
-scales. It therefore supports a more controlled comparison among full
-attention, selective state-space modeling, and a hybrid linear-attention model.
-The experiments should not be read as a reproduction of the BASED paper's
-throughput claims. The optimized kernels required for faithful speed comparison
-were not available in our setup, and BASED accuracy runs were performed with a
-more conservative decoding path to avoid artifacts in the public fallback
-implementation. Instead, the study is best understood as a controlled
-long-context retrieval extension using public checkpoints.
+The empirical portion of this report therefore uses two complementary public
+checkpoint families. The first is the HazyResearch family released with the
+BASED paper, which includes attention, Mamba, and BASED models at two smaller scales. It provides a broad matched-family contrast between full attention, state-space memory, and hybrid linear attention under a hard distractor stress test. The second is the official State Spaces Mamba family, comparing Mamba
+2.8B, Mamba-2 2.7B, and Mamba-2-Attn 2.7B. It provides a narrower and more
+graded comparison within the Mamba family using intermediate distractor
+counts. Together, these experiments address three questions. First, how do
+explicit attention, state-space memory, and hybrid efficient architectures
+behave when synthetic retrieval requires exact key-value binding? Second, does
+Mamba-2 improve retrieval robustness relative to original Mamba under similar
+public checkpoint conditions? Third, how much do the conclusions depend on the
+interface used to elicit or score an answer?
 
-\section{Experimental Expectations}
+Both experiments use synthetic passkey retrieval. A prompt contains one or more
+records of the form
+\[
+\texttt{PASSKEY\_RECORD[key] = value}.
+\]
+At the end of the document, the model is asked to complete the matching record
+for a queried key. The primary metric is exact-match generation accuracy: the
+first number generated by the model is compared to the target value. We also
+record failure type. A distractor-value error means the model produced the
+value of another record in the document; a not-in-document error means it
+produced a number not present in the prompt; and a no-number error means it
+failed to emit a numeric answer.
 
-The survey suggests several expectations for synthetic retrieval. First,
-single-needle retrieval should be relatively easy. When there is only one
-record in the document, the model does not need to choose among competing
-associations. Second, multi-key retrieval with distractors should be much more
-diagnostic. In that setting, the model must bind the queried key to the correct
-value among many same-format alternatives. This directly stresses interference
-and overwrite behavior.
+For the Mamba-family experiment, we also use a likelihood diagnostic. Instead
+of allowing the model to generate freely, the diagnostic ranks candidate
+numeric continuations after the same passkey-completion prompt. The candidate
+set is the target value plus all distractor values, or synthetic numeric
+negatives when no distractors are present. This diagnostic helps distinguish
+between failure to identify the answer and failure to emit it cleanly. It is
+used as a companion to generation accuracy, not as a replacement.
 
-Full attention should have an advantage when exact key-value binding is
-required, because it retains explicit access to prior tokens. Compressed-memory
-models may still succeed if their state preserves the relevant association, but
-they have a clearer failure mode: many similar records can collide in the
-compressed state. For that reason, the most informative outcome is not only
-accuracy but the type of error. A distractor value suggests that the model found
-the record format but selected the wrong association. A number not present in
-the document suggests a more general recall or generation failure. A response
-with no number at all suggests that the model has left the intended answer mode
-and reverted to ordinary continuation.
+The experiments should be interpreted as controlled probes of retrieval
+behavior in available public models. They are not universal architectural
+rankings, and they do not reproduce the throughput or memory-efficiency claims
+of the original papers.
 
-These are expectations rather than strict predictions. Architecture is only one
-factor in empirical behavior. Checkpoint training, scale, prompt format,
-tokenizer behavior, and implementation path all affect the final result. The
-experiments that follow should therefore be interpreted as controlled probes of
-retrieval behavior in available public models, not as definitive rankings of
-all efficient long-context architectures.
+\section{Experiment 1: BASED-Family Retrieval}
+
+The first experiment evaluates the HazyResearch checkpoint family released
+with the BASED paper. This family is useful because it contains an attention
+baseline, a Mamba baseline, and a BASED model at two similar scales. Full
+attention preserves explicit pairwise access to earlier tokens. Mamba replaces
+that access with a selective state-space recurrence, compressing the past into
+a structured hidden state. BASED combines efficient sequence-mixing mechanisms,
+including linear attention, to target a recall-throughput tradeoff. The
+comparison therefore tests whether the expected retrieval advantage of explicit
+attention appears when the checkpoint source and tokenizer family are held
+relatively fixed.
+
+\begin{table}[H]
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\renewcommand{\arraystretch}{1.12}
+\begin{tabularx}{\textwidth}{
+>{\raggedright\arraybackslash}p{2.4cm}
+>{\raggedright\arraybackslash}p{2.4cm}
+>{\raggedright\arraybackslash}X
+>{\raggedright\arraybackslash}p{2.7cm}}
+\toprule
+\textbf{Model label} &
+\textbf{Architecture} &
+\textbf{Checkpoint} &
+\textbf{Evaluation note} \\
+\midrule
+Attention 360M & Full attention & \texttt{hazyresearch/attn-360m} &
+bf16, cached decoding \\
+Attention 1.4B & Full attention & \texttt{hazyresearch/attn-1b} &
+bf16, cached decoding \\
+Mamba 360M & Selective SSM & \texttt{hazyresearch/mamba-360m} &
+bf16, cached decoding \\
+Mamba 1.4B & Selective SSM & \texttt{hazyresearch/mamba-1b} &
+bf16, cached decoding \\
+BASED 360M & Hybrid linear attention & \texttt{hazyresearch/based-360m} &
+fp32, recompute decoding \\
+BASED 1.4B & Hybrid linear attention & \texttt{hazyresearch/based-1b} &
+fp32, recompute decoding \\
+\bottomrule
+\end{tabularx}
+\caption{Public HazyResearch checkpoints used in Experiment 1. The BASED
+models are run in fp32 with recompute decoding for accuracy reliability, as
+discussed in Section~\ref{sec:diagnostics}.}
+\label{tab:experimental-models}
+\end{table}
+
+The experiment should be read as an accuracy-focused extension of the BASED
+model comparison, not as a reproduction of the paper's throughput results. The
+optimized kernel path needed for faithful speed comparison was outside the
+scope of this implementation, and the BASED models use a conservative
+recompute decoding strategy after the reliability checks described below.
+Consequently, the reported outcomes are retrieval accuracy and failure type,
+not runtime or memory efficiency.
+
+\subsection{Tasks and Evaluation}
+
+Two synthetic retrieval tasks are used. The first is a single-needle task: one
+key-value record is placed in an otherwise irrelevant context, and the model is
+asked to return the value associated with the target key. The second is a
+multi-key task with distractors: the context contains the target record plus
+twenty same-format distractor records, and the model must return the value
+belonging to the queried key. The second task is harder because the model must
+not only notice the record format, but bind the correct key to its value among
+many similar alternatives.
+
+The 20-distractor setting should be interpreted as a hard stress test rather
+than as a fine-grained degradation curve. It was chosen to make interference
+visible in a compact matrix across six models and eight lengths. The later
+State Spaces experiment uses 0, 5, and 10 distractors to resolve more gradual
+degradation after this harder setting showed that high distractor pressure can
+quickly saturate some efficient models.
+
+\begin{table}[H]
+\centering
+\small
+\setlength{\tabcolsep}{5pt}
+\renewcommand{\arraystretch}{1.12}
+\begin{tabularx}{\textwidth}{
+>{\raggedright\arraybackslash}p{3.2cm}
+>{\raggedright\arraybackslash}p{2.6cm}
+>{\raggedright\arraybackslash}p{3.0cm}
+>{\raggedright\arraybackslash}X}
+\toprule
+\textbf{Task} &
+\textbf{Distractors} &
+\textbf{Context lengths} &
+\textbf{Samples and scoring} \\
+\midrule
+Single needle & 0 &
+512, 768, 1024, 1280, 1536, 1792, 2048, 2560 &
+30 examples per length; exact match on the first generated number \\
+Multi-key retrieval & 20 &
+512, 768, 1024, 1280, 1536, 1792, 2048, 2560 &
+30 examples per length; exact match on the first generated number \\
+\bottomrule
+\end{tabularx}
+\caption{Final evaluation matrix. With six models, two tasks, eight context
+lengths, and thirty examples per setting, the clean sweep contains 2880 model
+generations.}
+\label{tab:task-matrix}
+\end{table}
+
+Datasets were generated deterministically and tokenized against the GPT-2
+tokenizer used by the checkpoints. All models were evaluated on the same
+dataset files, prompts, target lengths, and scoring logic. Generation was
+greedy, with a maximum of eight new tokens. A prediction was counted as
+correct when the first number emitted by the model exactly matched the target
+value. Incorrect responses were further categorized as a distractor value, a
+number not present in the document, or a response with no generated number.
+
+\subsection{Single-Needle Results}
+
+Single-needle retrieval is comparatively forgiving. As shown in
+Figure~\ref{fig:single-needle} and Table~\ref{tab:single-needle-results}, most
+models remain accurate across the tested context lengths. Attention 360M is
+perfect at all lengths except 768, where it scores 29/30. Attention 1.4B is
+less smooth at shorter lengths but reaches 30/30 at 2560. The 1.4B Mamba and
+both BASED models are also strong, while Mamba 360M shows the clearest
+late-context degradation, falling to 19/30 at 2560.
+
+\begin{figure}[!htbp]
+\centering
+\includegraphics[width=0.78\textwidth]{figures/single_needle_accuracy.pdf}
+\caption{Exact-match accuracy on the single-needle task. Most models solve the
+task reliably, indicating that a single salient key-value record is not enough
+to sharply distinguish the architectures in this setting.}
+\label{fig:single-needle}
+\end{figure}
+
+\begin{table}[H]
+\centering
+\scriptsize
+\setlength{\tabcolsep}{3pt}
+\renewcommand{\arraystretch}{1.08}
+\begin{tabular}{lrrrrrrrr}
+\toprule
+\textbf{Model} & \textbf{512} & \textbf{768} & \textbf{1024} &
+\textbf{1280} & \textbf{1536} & \textbf{1792} & \textbf{2048} &
+\textbf{2560} \\
+\midrule
+Attention 360M & 100 & 96.7 & 100 & 100 & 100 & 100 & 100 & 100 \\
+Attention 1.4B & 73.3 & 70.0 & 96.7 & 86.7 & 96.7 & 86.7 & 83.3 & 100 \\
+Mamba 360M & 96.7 & 100 & 100 & 96.7 & 96.7 & 83.3 & 83.3 & 63.3 \\
+Mamba 1.4B & 96.7 & 100 & 100 & 100 & 100 & 93.3 & 90.0 & 100 \\
+BASED 360M & 100 & 100 & 100 & 100 & 100 & 100 & 90.0 & 90.0 \\
+BASED 1.4B & 96.7 & 96.7 & 100 & 100 & 100 & 96.7 & 96.7 & 96.7 \\
+\bottomrule
+\end{tabular}
+\caption{Single-needle exact-match accuracy by target context length
+(\%). Each cell summarizes 30 examples.}
+\label{tab:single-needle-results}
+\end{table}
+
+The main implication is that simple passkey retrieval can overstate a model's
+long-context retrieval ability. When the context contains only one relevant
+record, even compressed-memory architectures often have enough signal to
+preserve or reconstruct the target association.
+
+\subsection{Multi-Key Results}
+
+The multi-key task produces a much stronger separation. Figure
+\ref{fig:multi-key} and Table~\ref{tab:multi-key-results} show that the
+attention baselines retain substantially higher accuracy than Mamba or BASED
+when twenty same-format distractors are present. Attention 1.4B is the strongest
+model through 2048 tokens, scoring between 70.0\% and 96.7\%, while Attention
+360M remains moderate and declines to 23.3\% at 2560.
+
+\begin{figure}[!htbp]
+\centering
+\includegraphics[width=0.78\textwidth]{figures/multi_key_accuracy.pdf}
+\caption{Exact-match accuracy on the multi-key task with twenty distractor
+records. The distractor setting separates the full-attention baselines from the
+compressed-memory models much more clearly than the single-needle task.}
+\label{fig:multi-key}
+\end{figure}
+
+\begin{table}[H]
+\centering
+\scriptsize
+\setlength{\tabcolsep}{3pt}
+\renewcommand{\arraystretch}{1.08}
+\begin{tabular}{lrrrrrrrr}
+\toprule
+\textbf{Model} & \textbf{512} & \textbf{768} & \textbf{1024} &
+\textbf{1280} & \textbf{1536} & \textbf{1792} & \textbf{2048} &
+\textbf{2560} \\
+\midrule
+Attention 360M & 43.3 & 43.3 & 46.7 & 46.7 & 60.0 & 56.7 & 46.7 & 23.3 \\
+Attention 1.4B & 83.3 & 83.3 & 96.7 & 76.7 & 76.7 & 80.0 & 70.0 & 3.3 \\
+Mamba 360M & 0 & 3.3 & 3.3 & 0 & 0 & 0 & 0 & 3.3 \\
+Mamba 1.4B & 3.3 & 13.3 & 13.3 & 3.3 & 3.3 & 3.3 & 6.7 & 0 \\
+BASED 360M & 6.7 & 16.7 & 13.3 & 10.0 & 13.3 & 10.0 & 3.3 & 3.3 \\
+BASED 1.4B & 20.0 & 20.0 & 20.0 & 10.0 & 10.0 & 6.7 & 3.3 & 6.7 \\
+\bottomrule
+\end{tabular}
+\caption{Multi-key exact-match accuracy by target context length (\%). Each
+cell summarizes 30 examples.}
+\label{tab:multi-key-results}
+\end{table}
+
+Mamba and BASED perform poorly in this distractor-heavy setting. Their errors
+are not usually blank responses; the models often generate either a distractor
+value or a number not present in the document. This is consistent with the
+retrieval risk described earlier: when many similar records are written into
+compressed state, the model may preserve the general task format without
+retaining the exact queried binding.
+
+\begin{table}[H]
+\centering
+\small
+\setlength{\tabcolsep}{5pt}
+\renewcommand{\arraystretch}{1.1}
+\begin{tabular}{lrrrr}
+\toprule
+\textbf{Model} & \textbf{Correct} & \textbf{Distractor} &
+\textbf{Not in document} & \textbf{No number} \\
+\midrule
+Attention 360M & 23.3 & 53.3 & 23.3 & 0.0 \\
+Attention 1.4B & 3.3 & 3.3 & 0.0 & 93.3 \\
+Mamba 360M & 3.3 & 20.0 & 76.7 & 0.0 \\
+Mamba 1.4B & 0.0 & 50.0 & 50.0 & 0.0 \\
+BASED 360M & 3.3 & 23.3 & 73.3 & 0.0 \\
+BASED 1.4B & 6.7 & 33.3 & 60.0 & 0.0 \\
+\bottomrule
+\end{tabular}
+\caption{Failure categories on the 2560-token multi-key setting (\%). The
+Attention 1.4B collapse is qualitatively different from the compressed-memory
+failures because it usually generates no numeric answer at all.}
+\label{tab:failure-2560}
+\end{table}
+
+\subsection{Diagnostic Findings}
+\label{sec:diagnostics}
+
+\paragraph{BASED decoding reliability.}
+
+A reliability check on the BASED implementation found that cached generation
+could create an implausible nonmonotonic collapse in the single-needle task:
+accuracy dropped sharply at an intermediate length and then recovered at longer
+lengths. This pattern did not resemble ordinary degradation with context
+length. A targeted diagnostic compared cached generation against recompute
+decoding, where the full forward pass is rerun for each new token. On the
+previously failing 1792-token single-needle setting, BASED 360M in fp32
+improved from 2/20 under cached generation to 20/20 under recompute decoding.
+The final matrix therefore uses recompute decoding for BASED models.
+
+This choice is important for interpretation. It improves the reliability of
+the accuracy results, but it also means that runtime measurements from these
+runs should not be compared against the attention or Mamba cached-generation
+paths. For this reason, timing and memory measurements are not analyzed as
+experimental outcomes.
+
+\paragraph{Attention 1.4B multi-key collapse.}
+
+The most surprising result in the final matrix is Attention 1.4B at the
+2560-token multi-key setting. The model falls from 21/30 at 2048 tokens to
+1/30 at 2560, while the same checkpoint scores 30/30 on the 2560-token
+single-needle task. This suggests that the failure is not a hard context-window
+limit. Additional probes reproduced the collapse on the same thirty examples:
+increasing the generation budget, using recompute decoding, making the
+instruction more explicit, and allowing an explicit unknown sentinel did not
+restore performance. Instead, the model usually resumed document-style
+continuation and generated no numeric answer. The result is therefore treated
+as a stable task-mode collapse in this prompt setting, not as clean evidence of
+an architectural limit of attention.
+
+\FloatBarrier
+
+\section{Experiment 2: State Spaces Mamba Family}
+
+The second experiment focuses on larger official State Spaces checkpoints:
+\path{state-spaces/mamba-2.8b}, \path{state-spaces/mamba2-2.7b}, and
+\path{state-spaces/mamba2attn-2.7b}. These models are similar in scale and
+come from the same public release family, documented as trained on 300B tokens
+on the Pile. This does not make the comparison a perfect architectural
+ablation, since exact low-level training details are not fully audited here.
+It provides a cleaner setting for asking whether Mamba-2 improves retrieval
+robustness relative to original Mamba.
+
+Original Mamba uses selective state-space layers to update a compressed
+sequence state as the prompt is processed. Mamba-2 reformulates this family
+through structured state-space duality, preserving the efficient recurrent
+view while improving the architecture's parallel and hardware-friendly
+properties. Mamba-2-Attn is a hybrid variant that adds attention blocks to the
+Mamba-2 family. It is therefore useful for asking whether adding some explicit
+token access improves retrieval over a purely state-space model at similar
+scale.
+
+The corresponding State Spaces Transformer++ checkpoint was also considered,
+but not used as a primary baseline. Under the passkey-completion interface, it
+showed severe task-mode collapse: the model often resumed document-style
+continuation rather than emitting a numeric answer. Because that behavior did
+not provide a stable retrieval baseline, it is treated as a diagnostic
+observation rather than as an architectural comparison.
+
+\begin{table}[H]
+\centering
+\small
+\setlength{\tabcolsep}{5pt}
+\renewcommand{\arraystretch}{1.12}
+\begin{tabularx}{\textwidth}{
+>{\raggedright\arraybackslash}p{2.8cm}
+>{\raggedright\arraybackslash}p{3.6cm}
+>{\raggedright\arraybackslash}X}
+\toprule
+\textbf{Model label} & \textbf{Checkpoint} & \textbf{Role in comparison} \\
+\midrule
+Mamba 2.8B & \path{state-spaces/mamba-2.8b} &
+Original selective state-space model at comparable scale. \\
+Mamba-2 2.7B & \path{state-spaces/mamba2-2.7b} &
+Main successor architecture using the Mamba-2 formulation. \\
+Mamba-2-Attn 2.7B & \path{state-spaces/mamba2attn-2.7b} &
+Hybrid variant that adds attention blocks to the Mamba-2 family. \\
+\bottomrule
+\end{tabularx}
+\caption{Official State Spaces checkpoints used in Experiment 2. The models
+are similar in scale and evaluated with the same dataset, prompt format, and
+scoring logic.}
+\label{tab:mamba-family-models}
+\end{table}
+
+The task uses the same passkey-record format as Experiment 1, but with a
+different matrix. We evaluate context lengths of 2048, 4096, and 8192 tokens,
+with 0, 5, or 10 distractors and 30 examples per setting. The full generation
+matrix contains 810 model generations. This design avoids the all-or-nothing
+effect of the earlier 20-distractor probe while still increasing binding
+pressure beyond single-needle retrieval.
+
+\subsection{Generation Results}
+
+Figure~\ref{fig:state-spaces-generation} and
+Table~\ref{tab:state-spaces-generation} show exact-match generation accuracy.
+Mamba-2 is the most robust model overall. It is perfect without distractors,
+strong at 2048 and 4096 with 5 or 10 distractors, and degrades mainly in the
+hardest 8192-token, 10-distractor setting. Original Mamba performs well at
+shorter no-distractor settings but collapses at 8192. Mamba-2-Attn is strong
+at 2048 but falls sharply once both context length and distractor pressure
+increase.
+
+\begin{figure}[!htbp]
+\centering
+\includegraphics[width=0.82\textwidth]{figures/state_spaces_generation_accuracy.pdf}
+\caption{Generation accuracy for the State Spaces Mamba-family experiment.
+Mamba-2 remains strongest across the matrix, while Mamba and Mamba-2-Attn
+degrade more sharply under length and distractor pressure.}
+\label{fig:state-spaces-generation}
+\end{figure}
+
+\begin{table}[!htbp]
+\centering
+\small
+\setlength{\tabcolsep}{5pt}
+\renewcommand{\arraystretch}{1.08}
+\begin{tabular}{llrrr}
+\toprule
+\textbf{Distractors} & \textbf{Model} & \textbf{2048} & \textbf{4096} & \textbf{8192} \\
+\midrule
+0 & Mamba 2.8B & 100.0 & 96.7 & 0.0 \\
+0 & Mamba-2 2.7B & 100.0 & 100.0 & 100.0 \\
+0 & Mamba-2-Attn 2.7B & 100.0 & 80.0 & 100.0 \\
+\midrule
+5 & Mamba 2.8B & 63.3 & 33.3 & 0.0 \\
+5 & Mamba-2 2.7B & 90.0 & 90.0 & 53.3 \\
+5 & Mamba-2-Attn 2.7B & 100.0 & 23.3 & 13.3 \\
+\midrule
+10 & Mamba 2.8B & 56.7 & 20.0 & 0.0 \\
+10 & Mamba-2 2.7B & 83.3 & 80.0 & 13.3 \\
+10 & Mamba-2-Attn 2.7B & 100.0 & 13.3 & 0.0 \\
+\bottomrule
+\end{tabular}
+\caption{State Spaces generation accuracy by distractor count and target
+context length (\%). Each cell summarizes 30 examples.}
+\label{tab:state-spaces-generation}
+\end{table}
+
+The failure types are also informative. Mamba's 8192-token failures often
+produce no usable number or produce nonsensical numeric fragments, suggesting
+that the model is not merely selecting the wrong record. Mamba-2 failures at
+the hardest settings are usually distractor values, which points more directly
+to key-value binding confusion. Mamba-2-Attn also fails mostly through
+distractor selection once distractors and longer contexts are combined.
+
+\subsection{Completion-Likelihood Diagnostic}
+
+Because base models are sensitive to prompt interface, we add a
+numeric-likelihood diagnostic that preserves the generation prompt ending,
+\[
+\texttt{PASSKEY\_RECORD[key] =},
+\]
+but scores candidate numeric continuations rather than allowing free
+generation. Candidates are ranked by average token log-likelihood. This keeps
+the task shape fixed while asking whether the model assigns the highest
+probability to the correct value among plausible alternatives.
+
+A less aligned natural-language \texttt{Question: ... Answer:} probe produced
+much lower distractor accuracy, especially for Mamba-2, and appeared to measure
+prompt-format mismatch as much as retrieval. This sensitivity is consistent
+with broader long-context evaluation practice: benchmarks such as RULER use
+fixed templates and answer prefixes because output format can contaminate
+retrieval scores \cite{hsieh2024ruler}, and prior work has shown that
+long-context performance can depend on prompt placement and structure
+\cite{liu2024lostmiddle}.
+
+\begin{figure}[!htbp]
+\centering
+\includegraphics[width=0.82\textwidth]{figures/state_spaces_completion_likelihood_accuracy.pdf}
+\caption{Completion-likelihood accuracy for the State Spaces Mamba-family
+experiment. The diagnostic uses the same passkey-completion prompt as
+generation, but ranks candidate numeric continuations by average
+log-likelihood.}
+\label{fig:state-spaces-likelihood}
+\end{figure}
+
+\begin{table}[!htbp]
+\centering
+\small
+\setlength{\tabcolsep}{5pt}
+\renewcommand{\arraystretch}{1.08}
+\begin{tabular}{llrrr}
+\toprule
+\textbf{Distractors} & \textbf{Model} & \textbf{2048} & \textbf{4096} & \textbf{8192} \\
+\midrule
+0 & Mamba 2.8B & 100.0 & 100.0 & 30.0 \\
+0 & Mamba-2 2.7B & 100.0 & 100.0 & 100.0 \\
+0 & Mamba-2-Attn 2.7B & 100.0 & 100.0 & 100.0 \\
+\midrule
+5 & Mamba 2.8B & 76.7 & 33.3 & 20.0 \\
+5 & Mamba-2 2.7B & 93.3 & 90.0 & 63.3 \\
+5 & Mamba-2-Attn 2.7B & 100.0 & 33.3 & 30.0 \\
+\midrule
+10 & Mamba 2.8B & 63.3 & 20.0 & 6.7 \\
+10 & Mamba-2 2.7B & 86.7 & 80.0 & 16.7 \\
+10 & Mamba-2-Attn 2.7B & 100.0 & 26.7 & 16.7 \\
+\bottomrule
+\end{tabular}
+\caption{Completion-likelihood accuracy by distractor count and target context
+length (\%). Each cell summarizes 30 examples.}
+\label{tab:state-spaces-likelihood}
+\end{table}
+
+The completion-likelihood diagnostic supports the generation interpretation.
+Mamba-2 remains the strongest model, and its 2048- and 4096-token distractor
+results are close to its generation accuracy. Mamba-2-Attn's 4096-token
+zero-distractor generation dip disappears under likelihood scoring, indicating
+that the correct value was still ranked highest and the generation errors were
+likely formatting or near-miss artifacts. Original Mamba's 8192-token collapse,
+however, remains visible: it scores only 30.0\% with no distractors and 6.7\%
+with 10 distractors under completion likelihood.
+
+\FloatBarrier
+
+\section{Cross-Experiment Discussion}
+
+The two experiments support several bounded conclusions. First, distractors
+are a stronger stressor than length alone in these passkey tasks. In the
+BASED-family comparison, most models solve single-needle retrieval, but
+performance separates sharply once the context contains many same-format
+records. This supports the mechanistic concern that compressed or linear memory
+can blur similar key-value bindings.
+
+Second, the results should not be collapsed into a single claim that efficient
+sequence models either beat or fail to beat attention. The HazyResearch
+attention baselines provide evidence that explicit attention remains powerful
+for exact retrieval when a stable attention checkpoint is available. The State
+Spaces Transformer++ checkpoint, by contrast, did not produce a reliable
+passkey-completion baseline in our diagnostics. That result is a
+methodological warning about base-model evaluation, not evidence that attention
+is inherently weak.
+
+Third, the Mamba-2 result is the clearest positive finding. Across generation
+and completion likelihood, Mamba-2 substantially outperforms original Mamba
+under similar official checkpoint conditions. The improvement is especially
+visible at 4096 tokens with distractors, where Mamba-2 remains near 80--90\%
+while Mamba falls to 20--33\%. At 8192 tokens with 10 distractors, however,
+even Mamba-2 falls sharply. The hardest setting therefore still exposes a real
+binding challenge: the model often selects a distractor value rather than the
+queried value.
+
+Fourth, the hybrid results are mixed. BASED and Mamba-2-Attn both combine
+multiple sequence-mixing mechanisms, but neither hybrid uniformly solves
+retrieval under distractor pressure. Mamba-2-Attn is excellent at 2048 tokens,
+yet much less stable than pure Mamba-2 at 4096 and 8192 with distractors. This
+does not show that attention is harmful, nor does it contradict attention's
+general usefulness in other settings. It shows only that adding attention in
+this hybrid checkpoint does not automatically produce better synthetic
+key-value retrieval under the tested prompt and distractor conditions.
+
+Finally, prompt interface matters. The same candidate-likelihood method gave
+very different results when applied after an \texttt{Answer:} prompt versus
+after the original \texttt{PASSKEY\_RECORD[key] =} completion prompt. For base
+models, a likelihood diagnostic should preserve the task interface whenever
+possible. Otherwise, it may measure whether the model understands a
+question-answer format rather than whether it can retrieve the target record.
+
+\section{Limitations}
+
+Several limitations qualify these conclusions. First, the tasks are synthetic.
+They isolate exact key-value binding under context length and distractor
+pressure, but they do not cover the full range of long-context reasoning,
+summarization, code analysis, or retrieval-augmented generation. Second, all
+tested models are public base checkpoints. Instruction tuning, different
+pretraining mixtures, or larger scales could change performance substantially.
+
+Third, the experiments do not provide faithful throughput comparisons. The
+BASED runs use recompute decoding for accuracy reliability, and the optimized
+kernel path needed for speed evaluation was outside the scope of this
+implementation. As a result, the experiments speak to retrieval accuracy, not
+to the full recall-throughput tradeoff emphasized by the BASED paper.
+
+Fourth, architecture is not perfectly isolated from training. The State Spaces
+models come from the same public release family and similar scale, but the
+public artifacts do not allow every low-level training hyperparameter to be
+audited. The findings are therefore best read as checkpoint-family evidence,
+not as a definitive causal ablation. Fifth, the distractor grids are not
+identical across experiments: the BASED-family experiment uses a 20-distractor
+stress test, while the State Spaces experiment uses intermediate distractor
+counts to examine partial degradation. Because these grids differ, absolute
+accuracy values should not be compared directly across Experiment 1 and
+Experiment 2; the cross-experiment comparison is qualitative and
+methodological rather than a single shared leaderboard. Finally, prompt format
+affects base-model evaluation. We address this with completion-style likelihood
+diagnostics, but the broader point remains: long-context retrieval benchmarks
+measure an interaction between model, prompt, decoding, and scoring.
+
+\section{Conclusion}
+
+This study supports a nuanced view of synthetic key-value retrieval in
+efficient language models. In the BASED-family experiment, attention baselines
+remain strongest when many same-format distractors are present, while Mamba and
+BASED often confuse the queried value with another record or with an
+unsupported number. This result is consistent with the idea that compressed
+memory can struggle with exact key-value binding.
+
+The State Spaces experiment shows a different but compatible result: within
+the Mamba family, Mamba-2 substantially improves retrieval robustness over
+original Mamba. The improvement appears both in free generation and in a
+prompt-aligned likelihood diagnostic. Mamba-2-Attn performs very well in short
+contexts but does not match pure Mamba-2 under longer distractor-heavy
+conditions.
+
+The overall conclusion is therefore not that efficient sequence models simply
+succeed or fail at long-context retrieval. Rather, exact synthetic retrieval
+remains a hard test for compressed-memory architectures, especially when
+distractors create competing bindings. At the same time, newer state-space
+designs such as Mamba-2 can meaningfully improve robustness within that
+efficient modeling regime. Future work should connect these accuracy probes to
+faithful throughput measurements and to more natural long-context tasks.
 
 \begin{thebibliography}{99}
 
@@ -376,6 +1014,17 @@ NVIDIA et al.
 \newblock Nemotron-H: A family of accurate and efficient hybrid
 Mamba-Transformer models.
 \newblock arXiv preprint, 2025.
+
+\bibitem{hsieh2024ruler}
+C.-P. Hsieh et al.
+\newblock RULER: What's the real context size of your long-context language
+models?
+\newblock arXiv preprint arXiv:2404.06654, 2024.
+
+\bibitem{liu2024lostmiddle}
+N. F. Liu et al.
+\newblock Lost in the middle: How language models use long contexts.
+\newblock Transactions of the Association for Computational Linguistics, 2024.
 
 \end{thebibliography}
 

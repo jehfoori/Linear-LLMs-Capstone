@@ -1,5 +1,5 @@
 task: passkey_distractors
-target_lengths: [512, 1024, 2048]
+target_lengths: [2048, 4096, 8192]
 n_per_length: 10
 num_distractors: 20
-seed: 930024
+seed: 973024

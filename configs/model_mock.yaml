@@ -1,6 +1,0 @@
-runner: mock
-model_id: mock-passkey-oracle
-label: Mock Oracle
-max_new_tokens: 8
-do_sample: false
-use_cache: true

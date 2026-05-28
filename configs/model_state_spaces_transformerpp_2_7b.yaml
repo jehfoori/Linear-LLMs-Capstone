@@ -1,8 +1,8 @@
 runner: mamba_ssm_lm
-model_id: state-spaces/mamba2-1.3b
+model_id: state-spaces/transformerpp-2.7b
 tokenizer_id: EleutherAI/gpt-neox-20b
-label: Mamba-2 1.3B Official
-revision: c5b59d00ec85d313adea86a08cad2a43c962dd3b
+label: Transformer++ 2.7B State Spaces
+revision: 15a431b71c40c284138c379d07d4008a28fea397
 tokenizer_revision: c292233c833e336628618a88a648727eb3dff0a7
 dtype: bfloat16
 device: cuda
@@ -11,4 +11,3 @@ top_k: 1
 top_p: 0.0
 min_p: 0.0
 temperature: 1.0
-manual_weight_conversion: false

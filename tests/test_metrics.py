@@ -21,6 +21,19 @@ def test_accuracy_summary_groups_rows():
     assert by_length[4096]["accuracy_pct"] == 100
 
 
+def test_accuracy_summary_keeps_multiple_distractor_counts_separate():
+    rows = [
+        {"model_label": "A", "target_length": 1024, "num_distractors": 0, "correct": True},
+        {"model_label": "A", "target_length": 1024, "num_distractors": 5, "correct": False},
+    ]
+
+    summary = accuracy_summary(rows)
+
+    by_distractors = {row["num_distractors"]: row for row in summary}
+    assert by_distractors[0]["accuracy_pct"] == 100
+    assert by_distractors[5]["accuracy_pct"] == 0
+
+
 def test_position_summary_bins_rows():
     rows = [
         {"model_label": "A", "target_length": 1024, "correct": True, "needle_position_fraction": 0.1},

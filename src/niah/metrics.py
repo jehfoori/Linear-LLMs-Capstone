@@ -23,7 +23,7 @@ def _group_rows(rows: list[dict[str, Any]], keys: list[str]) -> dict[tuple[Any, 
 
 
 def accuracy_summary(rows: list[dict[str, Any]], group_keys: list[str] | None = None) -> list[dict[str, Any]]:
-    group_keys = group_keys or ["model_label", "target_length"]
+    group_keys = group_keys or _default_group_keys(rows)
     out: list[dict[str, Any]] = []
     for group, group_rows in sorted(_group_rows(rows, group_keys).items()):
         n = len(group_rows)
@@ -47,7 +47,7 @@ def accuracy_summary(rows: list[dict[str, Any]], group_keys: list[str] | None = 
 
 
 def failure_summary(rows: list[dict[str, Any]], group_keys: list[str] | None = None) -> list[dict[str, Any]]:
-    group_keys = group_keys or ["model_label", "target_length", "failure_type"]
+    group_keys = group_keys or [*_default_group_keys(rows), "failure_type"]
     grouped = _group_rows(rows, group_keys)
     totals = defaultdict(int)
     for group, group_rows in grouped.items():
@@ -77,9 +77,18 @@ def position_summary(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         with_bin = dict(row)
         with_bin["position_bin"] = position_bin
         binned.append(with_bin)
-    return accuracy_summary(binned, ["model_label", "target_length", "position_bin"])
+    keys = _default_group_keys(rows)
+    return accuracy_summary(binned, [*keys, "position_bin"])
 
 
 def _mean(values) -> float:
     clean = [float(value) for value in values if value not in (None, "")]
     return sum(clean) / len(clean) if clean else float("nan")
+
+
+def _default_group_keys(rows: list[dict[str, Any]]) -> list[str]:
+    keys = ["model_label", "target_length"]
+    distractor_values = {row.get("num_distractors") for row in rows if row.get("num_distractors") not in (None, "")}
+    if len(distractor_values) > 1:
+        keys.append("num_distractors")
+    return keys

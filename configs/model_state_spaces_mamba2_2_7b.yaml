@@ -1,0 +1,13 @@
+runner: mamba_ssm_lm
+model_id: state-spaces/mamba2-2.7b
+tokenizer_id: EleutherAI/gpt-neox-20b
+label: Mamba-2 2.7B State Spaces
+revision: 99b226cc377d131cccc610ed4346db564f381f1e
+tokenizer_revision: c292233c833e336628618a88a648727eb3dff0a7
+dtype: bfloat16
+device: cuda
+max_new_tokens: 8
+top_k: 1
+top_p: 0.0
+min_p: 0.0
+temperature: 1.0

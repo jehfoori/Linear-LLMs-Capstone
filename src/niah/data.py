@@ -460,45 +460,49 @@ def generate_dataset(config: dict[str, Any]) -> list[dict[str, Any]]:
     target_lengths = [int(v) for v in config.get("target_lengths", [1024, 4096, 8192, 16384])]
     n_per_length = int(config.get("n_per_length", 50))
     base_seed = int(config.get("seed", 812345))
-    num_distractors = int(config.get("num_distractors", 20))
+    raw_distractors = config.get("num_distractors", 20)
+    num_distractor_values = [int(v) for v in raw_distractors] if isinstance(raw_distractors, list) else [int(raw_distractors)]
     num_hops = int(config.get("num_hops", 2))
     count_length, length_metric = build_length_counter(config)
 
     rows: list[dict[str, Any]] = []
     for target_length in target_lengths:
-        for index in range(n_per_length):
-            seed = base_seed + target_length * 1000 + index
-            example_id = f"{task}_{target_length}_{index:04d}"
-            if task == "passkey_single":
-                row = generate_single_example(
-                    example_id=example_id,
-                    target_length=target_length,
-                    seed=seed,
-                    count_length=count_length,
-                    length_metric=length_metric,
-                )
-            elif task == "passkey_distractors":
-                row = generate_distractor_example(
-                    example_id=example_id,
-                    target_length=target_length,
-                    seed=seed,
-                    num_distractors=num_distractors,
-                    count_length=count_length,
-                    length_metric=length_metric,
-                )
-            elif task == "variable_tracking":
-                row = generate_variable_tracking_example(
-                    example_id=example_id,
-                    target_length=target_length,
-                    seed=seed,
-                    num_distractors=num_distractors,
-                    num_hops=num_hops,
-                    count_length=count_length,
-                    length_metric=length_metric,
-                )
-            else:
-                raise ValueError(f"Unknown dataset task: {task}")
-            rows.append(row)
+        for num_distractors in num_distractor_values:
+            for index in range(n_per_length):
+                seed = base_seed + target_length * 1000 + num_distractors * 100 + index
+                distractor_suffix = f"_d{num_distractors}" if len(num_distractor_values) > 1 else ""
+                example_id = f"{task}{distractor_suffix}_{target_length}_{index:04d}"
+                if task == "passkey_single":
+                    row = generate_single_example(
+                        example_id=example_id,
+                        target_length=target_length,
+                        seed=seed,
+                        count_length=count_length,
+                        length_metric=length_metric,
+                    )
+                    row["num_distractors"] = num_distractors
+                elif task == "passkey_distractors":
+                    row = generate_distractor_example(
+                        example_id=example_id,
+                        target_length=target_length,
+                        seed=seed,
+                        num_distractors=num_distractors,
+                        count_length=count_length,
+                        length_metric=length_metric,
+                    )
+                elif task == "variable_tracking":
+                    row = generate_variable_tracking_example(
+                        example_id=example_id,
+                        target_length=target_length,
+                        seed=seed,
+                        num_distractors=num_distractors,
+                        num_hops=num_hops,
+                        count_length=count_length,
+                        length_metric=length_metric,
+                    )
+                else:
+                    raise ValueError(f"Unknown dataset task: {task}")
+                rows.append(row)
     return rows
 
 

@@ -1,4 +1,0 @@
-task: passkey_single
-target_lengths: [512, 768, 1024, 1280, 1536, 1792, 2048, 2560]
-n_per_length: 20
-seed: 961024

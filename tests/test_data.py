@@ -41,6 +41,24 @@ def test_dataset_generation_is_deterministic():
     assert len({row["example_id"] for row in first}) == 6
 
 
+def test_dataset_generation_accepts_multiple_distractor_counts():
+    config = {
+        "task": "passkey_distractors",
+        "target_lengths": [128],
+        "n_per_length": 2,
+        "num_distractors": [0, 5],
+        "seed": 99,
+    }
+
+    rows = generate_dataset(config)
+
+    assert len(rows) == 4
+    assert {row["num_distractors"] for row in rows} == {0, 5}
+    assert len({row["example_id"] for row in rows}) == 4
+    assert any("_d0_" in row["example_id"] for row in rows)
+    assert any("_d5_" in row["example_id"] for row in rows)
+
+
 def test_variable_tracking_example_invariants():
     row = generate_variable_tracking_example(
         example_id="variable_tracking_1024_0000",

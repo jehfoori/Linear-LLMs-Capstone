@@ -1,5 +1,0 @@
-task: passkey_distractors
-target_lengths: [1024, 4096, 8192, 16384]
-n_per_length: 50
-num_distractors: 20
-seed: 812345
